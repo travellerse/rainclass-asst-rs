@@ -1,0 +1,163 @@
+use async_trait::async_trait;
+use thiserror::Error;
+use tokio::sync::mpsc;
+
+use crate::app::{AppConfigDto, AppNotification};
+use crate::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
+use crate::domain::{AnswerPayload, CheckinId, Lesson, LessonId, Problem, ProblemId};
+
+#[derive(Debug, Clone)]
+pub enum LessonWsEvent {
+    ProblemPublished { problem: Problem },
+    CheckinOpened { checkin_id: CheckinId },
+    LessonEnded,
+    Warning { message: String },
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateInfo {
+    pub latest_version: String,
+    pub release_url: String,
+    pub published_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum ApiPortError {
+    #[error("api request failed ({context}): {detail}")]
+    RequestFailed { context: &'static str, detail: String },
+
+    #[error("api protocol changed: {0}")]
+    ProtocolChanged(String),
+
+    #[error("api auth failed: {0}")]
+    AuthFailed(String),
+}
+
+impl ApiPortError {
+    pub fn request(context: &'static str, detail: impl ToString) -> Self {
+        Self::RequestFailed {
+            context,
+            detail: detail.to_string(),
+        }
+    }
+
+    pub fn protocol(detail: impl ToString) -> Self {
+        Self::ProtocolChanged(detail.to_string())
+    }
+
+    pub fn auth(detail: impl ToString) -> Self {
+        Self::AuthFailed(detail.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum StoragePortError {
+    #[error("storage load failed: {0}")]
+    LoadFailed(String),
+
+    #[error("storage save failed: {0}")]
+    SaveFailed(String),
+
+    #[error("storage clear failed: {0}")]
+    ClearFailed(String),
+}
+
+impl StoragePortError {
+    pub fn load(detail: impl ToString) -> Self {
+        Self::LoadFailed(detail.to_string())
+    }
+
+    pub fn save(detail: impl ToString) -> Self {
+        Self::SaveFailed(detail.to_string())
+    }
+
+    pub fn clear(detail: impl ToString) -> Self {
+        Self::ClearFailed(detail.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum NotifyPortError {
+    #[error("notify send failed: {0}")]
+    SendFailed(String),
+}
+
+impl NotifyPortError {
+    pub fn send(detail: impl ToString) -> Self {
+        Self::SendFailed(detail.to_string())
+    }
+}
+
+#[derive(Debug, Clone, Error)]
+pub enum UpdatePortError {
+    #[error("update check failed: {0}")]
+    CheckFailed(String),
+}
+
+impl UpdatePortError {
+    pub fn check(detail: impl ToString) -> Self {
+        Self::CheckFailed(detail.to_string())
+    }
+}
+
+#[async_trait]
+pub trait ApiPort: Send + Sync {
+    async fn get_on_lessons(&self, session: &AuthSession) -> Result<Vec<Lesson>, ApiPortError>;
+    async fn get_lesson_problems(
+        &self,
+        session: &AuthSession,
+        lesson_id: LessonId,
+    ) -> Result<Vec<Problem>, ApiPortError>;
+    async fn submit_answer(
+        &self,
+        session: &AuthSession,
+        lesson_id: LessonId,
+        problem_id: ProblemId,
+        payload: AnswerPayload,
+    ) -> Result<(), ApiPortError>;
+    async fn submit_checkin(
+        &self,
+        session: &AuthSession,
+        lesson_id: LessonId,
+        checkin_id: CheckinId,
+    ) -> Result<(), ApiPortError>;
+    async fn start_qr_login(&self) -> Result<QrLoginBootstrap, ApiPortError>;
+    async fn poll_qr_login(&self, scene_id: &str) -> Result<QrLoginProgress, ApiPortError>;
+    async fn wait_qr_login(
+        &self,
+        scene_id: &str,
+        timeout_secs: u64,
+    ) -> Result<QrLoginProgress, ApiPortError>;
+    async fn refresh_session(&self, refresh_token: &str) -> Result<AuthSession, ApiPortError>;
+    async fn connect_lesson_stream(
+        &self,
+        session: &AuthSession,
+        lesson_id: LessonId,
+    ) -> Result<mpsc::Receiver<LessonWsEvent>, ApiPortError>;
+}
+
+#[async_trait]
+pub trait SessionStorePort: Send + Sync {
+    async fn load_session(&self) -> Result<Option<AuthSession>, StoragePortError>;
+    async fn save_session(&self, session: &AuthSession) -> Result<(), StoragePortError>;
+    async fn clear_session(&self) -> Result<(), StoragePortError>;
+}
+
+#[async_trait]
+pub trait ConfigStorePort: Send + Sync {
+    async fn load_config(&self) -> Result<AppConfigDto, StoragePortError>;
+    async fn save_config(&self, config: &AppConfigDto) -> Result<(), StoragePortError>;
+}
+
+#[async_trait]
+pub trait NotifierPort: Send + Sync {
+    async fn notify(&self, message: AppNotification) -> Result<(), NotifyPortError>;
+}
+
+#[async_trait]
+pub trait UpdateCheckerPort: Send + Sync {
+    async fn check_latest(
+        &self,
+        current_version: &str,
+    ) -> Result<Option<UpdateInfo>, UpdatePortError>;
+}
