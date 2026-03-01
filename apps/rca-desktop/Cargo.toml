@@ -1,0 +1,18 @@
+[package]
+name = "rca-desktop"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+mock-api = ["rca-infra/mock-api"]
+
+[dependencies]
+rca-core = { version = "0.1.0", path = "../../crates/rca-core" }
+rca-infra = { version = "0.1.0", path = "../../crates/rca-infra", default-features = false, features = ["legacy-env"] }
+slint.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+chrono.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true
