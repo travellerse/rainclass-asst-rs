@@ -1,0 +1,18 @@
+[package]
+name = "rca-cli"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+mock-api = ["rca-infra/mock-api"]
+
+[dependencies]
+rca-core = { version = "0.1.0", path = "../../crates/rca-core" }
+rca-infra = { version = "0.1.0", path = "../../crates/rca-infra", default-features = false, features = ["legacy-env"] }
+clap.workspace = true
+qrcode = "0.14"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+rqrr = "0.10"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
