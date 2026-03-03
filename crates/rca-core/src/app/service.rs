@@ -513,7 +513,15 @@ impl CoreAppService {
                 guard.app_state.current_lessons = lessons.clone();
                 guard.app_state.last_error = None;
                 for lesson in &lessons {
-                    tracing::info!("发现课程：{} ({})", lesson.course_name, lesson.teacher_name);
+                    if lesson.teacher_name.is_empty() {
+                        tracing::info!("发现课程：{}", lesson.course_name);
+                    } else {
+                        tracing::info!(
+                            "发现课程：{} ({})",
+                            lesson.course_name,
+                            lesson.teacher_name
+                        );
+                    }
                     Self::append_recent_event(
                         &mut guard,
                         CoreEvent::LessonDiscovered {

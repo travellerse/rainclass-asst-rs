@@ -29,6 +29,9 @@ use tracing_subscriber::EnvFilter;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -195,13 +198,15 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+    let default_level = if cli.verbose { "debug" } else { "info" };
+
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level)),
         )
         .init();
 
-    let cli = Cli::parse();
     let app = bootstrap_app()?;
 
     app.handle_command(AppCommand::LoadConfig).await?;
