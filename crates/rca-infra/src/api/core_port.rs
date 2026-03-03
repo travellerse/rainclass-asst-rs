@@ -12,8 +12,8 @@ use reqwest::header::{AUTHORIZATION, COOKIE, HeaderMap, HeaderValue, USER_AGENT}
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio_tungstenite::connect_async;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use rca_core::app::ports::{ApiPort, ApiPortError, LessonWsEvent};
 use rca_core::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
@@ -101,7 +101,8 @@ impl YktApiPort {
     }
 
     fn to_non_zero(id: u64, field: &str) -> Result<NonZeroU64, ApiError> {
-        NonZeroU64::new(id).ok_or_else(|| ApiError::protocol("numeric id conversion", format!("{field} is zero")))
+        NonZeroU64::new(id)
+            .ok_or_else(|| ApiError::protocol("numeric id conversion", format!("{field} is zero")))
     }
 
     fn parse_api_ok(response: Value) -> Result<Value, ApiError> {
@@ -257,7 +258,6 @@ impl YktApiPort {
     }
 }
 
-
 #[async_trait]
 impl RainClassroomWs for YktApiPort {
     async fn connect_lesson_stream(
@@ -272,9 +272,11 @@ impl RainClassroomWs for YktApiPort {
             .into_client_request()
             .map_err(|err| ApiError::ws_request(format!("invalid ws request: {err}")))?;
         let cookie = format!("sessionid={}", auth.access_token);
-        request
-            .headers_mut()
-            .insert(COOKIE, HeaderValue::from_str(&cookie).map_err(|err| ApiError::invalid_header("cookie", err))?);
+        request.headers_mut().insert(
+            COOKIE,
+            HeaderValue::from_str(&cookie)
+                .map_err(|err| ApiError::invalid_header("cookie", err))?,
+        );
         request.headers_mut().insert(
             USER_AGENT,
             HeaderValue::from_str(&self.user_agent)
@@ -328,18 +330,17 @@ impl RainClassroomWs for YktApiPort {
                         continue;
                     }
                 };
-                let op = value
-                    .get("op")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown");
+                let op = value.get("op").and_then(Value::as_str).unwrap_or("unknown");
 
                 let mapped = match op {
                     "unlockproblem" => {
                         if let Some(problem) = value.get("problem") {
-                            Self::map_ws_problem(problem, lesson_id).unwrap_or(WsEventDto::Unknown {
-                                raw_type: op.to_string(),
-                                raw_payload: text.clone(),
-                            })
+                            Self::map_ws_problem(problem, lesson_id).unwrap_or(
+                                WsEventDto::Unknown {
+                                    raw_type: op.to_string(),
+                                    raw_payload: text.clone(),
+                                },
+                            )
                         } else {
                             WsEventDto::Unknown {
                                 raw_type: op.to_string(),
@@ -353,10 +354,12 @@ impl RainClassroomWs for YktApiPort {
                             "problemType": value.get("problemType").and_then(Value::as_i64).unwrap_or(0),
                             "title": value.get("title").and_then(Value::as_str).unwrap_or("WS 题目信息"),
                         });
-                        Self::map_ws_problem(&pseudo_problem, lesson_id).unwrap_or(WsEventDto::Unknown {
-                            raw_type: op.to_string(),
-                            raw_payload: text.clone(),
-                        })
+                        Self::map_ws_problem(&pseudo_problem, lesson_id).unwrap_or(
+                            WsEventDto::Unknown {
+                                raw_type: op.to_string(),
+                                raw_payload: text.clone(),
+                            },
+                        )
                     }
                     "checkinopened" | "checkin" => {
                         let checkin_id = value
@@ -390,86 +393,83 @@ impl RainClassroomWs for YktApiPort {
     }
 }
 fn map_problem_type(raw: &Value) -> ProblemType {
-        if let Some(code) = raw.as_i64() {
-            return match code {
-                1 => ProblemType::SingleChoice,
-                2 => ProblemType::MultipleChoice,
-                3 => ProblemType::FillBlank,
-                _ => ProblemType::Unknown,
-            };
-        }
-
-        let text = raw
-            .as_str()
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if text.contains("single") || text.contains("choice") {
-            ProblemType::SingleChoice
-        } else if text.contains("multiple") {
-            ProblemType::MultipleChoice
-        } else if text.contains("blank") || text.contains("fill") {
-            ProblemType::FillBlank
-        } else {
-            ProblemType::Unknown
-        }
+    if let Some(code) = raw.as_i64() {
+        return match code {
+            1 => ProblemType::SingleChoice,
+            2 => ProblemType::MultipleChoice,
+            3 => ProblemType::FillBlank,
+            _ => ProblemType::Unknown,
+        };
     }
+
+    let text = raw.as_str().unwrap_or_default().to_ascii_lowercase();
+    if text.contains("single") || text.contains("choice") {
+        ProblemType::SingleChoice
+    } else if text.contains("multiple") {
+        ProblemType::MultipleChoice
+    } else if text.contains("blank") || text.contains("fill") {
+        ProblemType::FillBlank
+    } else {
+        ProblemType::Unknown
+    }
+}
 
 fn parse_problem_options(problem: &Value) -> Vec<ProblemOption> {
-        let mut options = Vec::new();
-        let candidates = problem
-            .get("options")
-            .or_else(|| problem.get("choices"))
-            .or_else(|| problem.get("optionList"))
-            .or_else(|| problem.get("choiceList"));
+    let mut options = Vec::new();
+    let candidates = problem
+        .get("options")
+        .or_else(|| problem.get("choices"))
+        .or_else(|| problem.get("optionList"))
+        .or_else(|| problem.get("choiceList"));
 
-        if let Some(Value::Array(items)) = candidates {
-            for (index, item) in items.iter().enumerate() {
-                match item {
-                    Value::Object(_) => {
-                        let option_id = item
-                            .get("optionId")
-                            .or_else(|| item.get("option_id"))
-                            .or_else(|| item.get("id"))
-                            .or_else(|| item.get("key"))
-                            .and_then(Value::as_str)
-                            .map(ToString::to_string)
-                            .unwrap_or_else(|| index.to_string());
-                        let text = item
-                            .get("text")
-                            .or_else(|| item.get("content"))
-                            .or_else(|| item.get("label"))
-                            .or_else(|| item.get("value"))
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string();
-                        options.push(ProblemOption { option_id, text });
-                    }
-                    Value::String(text) => {
-                        options.push(ProblemOption {
-                            option_id: index.to_string(),
-                            text: text.clone(),
-                        });
-                    }
-                    _ => {}
+    if let Some(Value::Array(items)) = candidates {
+        for (index, item) in items.iter().enumerate() {
+            match item {
+                Value::Object(_) => {
+                    let option_id = item
+                        .get("optionId")
+                        .or_else(|| item.get("option_id"))
+                        .or_else(|| item.get("id"))
+                        .or_else(|| item.get("key"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| index.to_string());
+                    let text = item
+                        .get("text")
+                        .or_else(|| item.get("content"))
+                        .or_else(|| item.get("label"))
+                        .or_else(|| item.get("value"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    options.push(ProblemOption { option_id, text });
                 }
+                Value::String(text) => {
+                    options.push(ProblemOption {
+                        option_id: index.to_string(),
+                        text: text.clone(),
+                    });
+                }
+                _ => {}
             }
         }
-
-        if options.is_empty() {
-            if let Some(Value::Array(answers)) = problem.get("answers") {
-                for answer in answers {
-                    if let Some(text) = answer.as_str() {
-                        options.push(ProblemOption {
-                            option_id: text.to_string(),
-                            text: text.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        options
     }
+
+    if options.is_empty()
+        && let Some(Value::Array(answers)) = problem.get("answers")
+    {
+        for answer in answers {
+            if let Some(text) = answer.as_str() {
+                options.push(ProblemOption {
+                    option_id: text.to_string(),
+                    text: text.to_string(),
+                });
+            }
+        }
+    }
+
+    options
+}
 
 #[async_trait]
 impl ApiPort for YktApiPort {
@@ -489,8 +489,7 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|err| ApiPortError::request("on-lesson decode", err))?;
 
-        let data = Self::parse_api_ok(value)
-            .map_err(ApiPortError::protocol)?;
+        let data = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         let classrooms = data
             .get("onLessonClassrooms")
             .and_then(Value::as_array)
@@ -505,8 +504,7 @@ impl ApiPort for YktApiPort {
             }
 
             let lesson_id = LessonId(
-                Self::to_non_zero(lesson_id_raw, "lessonId")
-                    .map_err(ApiPortError::protocol)?,
+                Self::to_non_zero(lesson_id_raw, "lessonId").map_err(ApiPortError::protocol)?,
             );
             let course_id = CourseId(
                 Self::to_non_zero(classroom_id_raw, "classroomId")
@@ -546,15 +544,12 @@ impl ApiPort for YktApiPort {
             .headers(headers.clone())
             .send()
             .await
-            .map_err(|err| {
-                ApiPortError::request("lesson basic-info", err)
-            })?
+            .map_err(|err| ApiPortError::request("lesson basic-info", err))?
             .json()
             .await
             .map_err(|err| ApiPortError::request("lesson basic-info decode", err))?;
 
-        let basic_data = Self::parse_api_ok(basic_info_value)
-            .map_err(ApiPortError::protocol)?;
+        let basic_data = Self::parse_api_ok(basic_info_value).map_err(ApiPortError::protocol)?;
         let mut presentation_ids = HashSet::new();
         if let Some(presentation_id) = basic_data.get("presentation").and_then(Value::as_u64) {
             presentation_ids.insert(presentation_id);
@@ -584,17 +579,13 @@ impl ApiPort for YktApiPort {
                 .headers(headers.clone())
                 .send()
                 .await
-                .map_err(|err| {
-                    ApiPortError::request("presentation fetch", err)
-                })?
+                .map_err(|err| ApiPortError::request("presentation fetch", err))?
                 .json()
                 .await
-                .map_err(|err| {
-                    ApiPortError::request("presentation fetch decode", err)
-                })?;
+                .map_err(|err| ApiPortError::request("presentation fetch decode", err))?;
 
-            let presentation_data = Self::parse_api_ok(presentation_value)
-                .map_err(ApiPortError::protocol)?;
+            let presentation_data =
+                Self::parse_api_ok(presentation_value).map_err(ApiPortError::protocol)?;
             let Some(Value::Array(slides)) = presentation_data.get("slides") else {
                 continue;
             };
@@ -684,8 +675,7 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|err| ApiPortError::request("submit answer decode", err))?;
 
-        let _ = Self::parse_api_ok(value)
-            .map_err(ApiPortError::protocol)?;
+        let _ = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         Ok(())
     }
 
@@ -716,8 +706,7 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|err| ApiPortError::request("submit checkin decode", err))?;
 
-        let _ = Self::parse_api_ok(value)
-            .map_err(ApiPortError::protocol)?;
+        let _ = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         Ok(())
     }
 
@@ -788,11 +777,8 @@ impl ApiPort for YktApiPort {
                             &scene_for_task,
                             QrSceneState::Rejected,
                         );
-                        if !bootstrap_sent {
-                            if let Some(sender) = bootstrap_tx.take() {
-                                let _ = sender
-                                    .send(Err(ApiPortError::request("receive wsapp", err)));
-                            }
+                        if !bootstrap_sent && let Some(sender) = bootstrap_tx.take() {
+                            let _ = sender.send(Err(ApiPortError::request("receive wsapp", err)));
                         }
                         return;
                     }
@@ -922,11 +908,8 @@ impl ApiPort for YktApiPort {
                 &scene_for_task,
                 QrSceneState::Expired,
             );
-            if !bootstrap_sent {
-                if let Some(sender) = bootstrap_tx.take() {
-                    let _ = sender
-                        .send(Err(ApiPortError::protocol("wsapp closed before qr ticket")));
-                }
+            if !bootstrap_sent && let Some(sender) = bootstrap_tx.take() {
+                let _ = sender.send(Err(ApiPortError::protocol("wsapp closed before qr ticket")));
             }
         });
 
@@ -938,7 +921,9 @@ impl ApiPort for YktApiPort {
     async fn poll_qr_login(&self, scene_id: &str) -> Result<QrLoginProgress, ApiPortError> {
         let mut states = self.qr_states.lock().expect("qr state poisoned");
         let Some(state) = states.get(scene_id).cloned() else {
-            return Err(ApiPortError::protocol(format!("unknown scene_id: {scene_id}")));
+            return Err(ApiPortError::protocol(format!(
+                "unknown scene_id: {scene_id}"
+            )));
         };
 
         match state {
@@ -970,7 +955,9 @@ impl ApiPort for YktApiPort {
             let maybe_progress = {
                 let mut states = self.qr_states.lock().expect("qr state poisoned");
                 let Some(state) = states.get(scene_id).cloned() else {
-                    return Err(ApiPortError::protocol(format!("unknown scene_id: {scene_id}")));
+                    return Err(ApiPortError::protocol(format!(
+                        "unknown scene_id: {scene_id}"
+                    )));
                 };
 
                 match state {
@@ -1026,17 +1013,12 @@ impl ApiPort for YktApiPort {
             .headers(headers)
             .send()
             .await
-            .map_err(|err| {
-                ApiPortError::request("refresh basic-info", err)
-            })?
+            .map_err(|err| ApiPortError::request("refresh basic-info", err))?
             .json()
             .await
-            .map_err(|err| {
-                ApiPortError::request("refresh basic-info decode", err)
-            })?;
+            .map_err(|err| ApiPortError::request("refresh basic-info decode", err))?;
 
-        let data = Self::parse_api_ok(value)
-            .map_err(ApiPortError::protocol)?;
+        let data = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         let user_id = data.get("id").and_then(Value::as_u64).unwrap_or(0);
         if user_id == 0 {
             return Err(ApiPortError::protocol("refresh basic-info missing user id"));

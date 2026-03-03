@@ -21,21 +21,24 @@ impl CredentialStore for KeyringCredentialStore {
         access: &str,
         refresh: Option<&str>,
     ) -> Result<(), StorageError> {
-        let entry = keyring::Entry::new(service, account).map_err(|source| StorageError::KeyringInit {
-            service: service.to_string(),
-            account: account.to_string(),
-            source,
-        })?;
+        let entry =
+            keyring::Entry::new(service, account).map_err(|source| StorageError::KeyringInit {
+                service: service.to_string(),
+                account: account.to_string(),
+                source,
+            })?;
         let payload = TokenPair {
             access: access.to_string(),
             refresh: refresh.map(ToString::to_string),
         };
         let raw = serde_json::to_string(&payload)?;
-        entry.set_password(&raw).map_err(|source| StorageError::KeyringSet {
-            service: service.to_string(),
-            account: account.to_string(),
-            source,
-        })?;
+        entry
+            .set_password(&raw)
+            .map_err(|source| StorageError::KeyringSet {
+                service: service.to_string(),
+                account: account.to_string(),
+                source,
+            })?;
         Ok(())
     }
 
@@ -44,11 +47,12 @@ impl CredentialStore for KeyringCredentialStore {
         service: &str,
         account: &str,
     ) -> Result<Option<(String, Option<String>)>, StorageError> {
-        let entry = keyring::Entry::new(service, account).map_err(|source| StorageError::KeyringInit {
-            service: service.to_string(),
-            account: account.to_string(),
-            source,
-        })?;
+        let entry =
+            keyring::Entry::new(service, account).map_err(|source| StorageError::KeyringInit {
+                service: service.to_string(),
+                account: account.to_string(),
+                source,
+            })?;
         match entry.get_password() {
             Ok(raw) => {
                 let pair: TokenPair = serde_json::from_str(&raw)?;
@@ -64,11 +68,12 @@ impl CredentialStore for KeyringCredentialStore {
     }
 
     async fn delete_token_pair(&self, service: &str, account: &str) -> Result<(), StorageError> {
-        let entry = keyring::Entry::new(service, account).map_err(|source| StorageError::KeyringInit {
-            service: service.to_string(),
-            account: account.to_string(),
-            source,
-        })?;
+        let entry =
+            keyring::Entry::new(service, account).map_err(|source| StorageError::KeyringInit {
+                service: service.to_string(),
+                account: account.to_string(),
+                source,
+            })?;
         match entry.delete_credential() {
             Ok(_) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(source) => Err(StorageError::KeyringDelete {

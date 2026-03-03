@@ -27,13 +27,19 @@ pub enum ApiError {
     RateLimited,
 
     #[error("invalid header `{header}`: {detail}")]
-    InvalidHeader { header: &'static str, detail: String },
+    InvalidHeader {
+        header: &'static str,
+        detail: String,
+    },
 
     #[error("missing protocol field `{0}`")]
     MissingField(&'static str),
 
     #[error("remote protocol changed at `{context}`: {detail}")]
-    ProtocolChanged { context: &'static str, detail: String },
+    ProtocolChanged {
+        context: &'static str,
+        detail: String,
+    },
 
     #[error("remote api error {code}: {message}")]
     RemoteError { code: i64, message: String },

@@ -108,14 +108,19 @@ impl CoreAppService {
 
     fn default_answer_payload(problem: &Problem) -> Option<AnswerPayload> {
         match problem.problem_type {
-            ProblemType::SingleChoice => problem.options.first().map(|option| AnswerPayload::Single {
-                option_id: option.option_id.clone(),
-            }),
-            ProblemType::MultipleChoice => problem.options.first().map(|option| {
-                AnswerPayload::Multiple {
-                    option_ids: vec![option.option_id.clone()],
-                }
-            }),
+            ProblemType::SingleChoice => {
+                problem.options.first().map(|option| AnswerPayload::Single {
+                    option_id: option.option_id.clone(),
+                })
+            }
+            ProblemType::MultipleChoice => {
+                problem
+                    .options
+                    .first()
+                    .map(|option| AnswerPayload::Multiple {
+                        option_ids: vec![option.option_id.clone()],
+                    })
+            }
             ProblemType::FillBlank => Some(AnswerPayload::FillBlank {
                 text: String::new(),
             }),
@@ -249,58 +254,59 @@ impl CoreAppService {
                     );
                 }
 
-                if config.auto_answer_enabled && answered_problems.insert(problem.problem_id.0.get()) {
-                    if let Some(payload) = Self::default_answer_payload(&problem) {
-                        match deps
-                            .api
-                            .submit_answer(&session, lesson.lesson_id, problem.problem_id, payload)
-                            .await
-                        {
-                            Ok(()) => {
-                                {
-                                    let mut guard = inner.lock().expect("core app state poisoned");
-                                    Self::append_recent_event(
-                                        &mut guard,
-                                        CoreEvent::AutoAnswerSubmitted {
-                                            lesson_id: lesson.lesson_id,
-                                            problem_id: problem.problem_id,
-                                        },
-                                    );
-                                }
-                                if config.notify_enabled {
-                                    let notification = AppNotification {
-                                        title: "自动答题成功".to_string(),
-                                        body: format!(
-                                            "{} 已自动回答题目 {}",
-                                            lesson.course_name,
-                                            problem.problem_id.0.get()
-                                        ),
-                                    };
-                                    if deps.notifier.notify(notification.clone()).await.is_ok() {
-                                        Self::emit_event_with_inner(
-                                            inner,
-                                            AppEvent::Notification(notification),
-                                        )
-                                        .await;
-                                    }
-                                }
-                            }
-                            Err(err) => {
+                if config.auto_answer_enabled
+                    && answered_problems.insert(problem.problem_id.0.get())
+                    && let Some(payload) = Self::default_answer_payload(&problem)
+                {
+                    match deps
+                        .api
+                        .submit_answer(&session, lesson.lesson_id, problem.problem_id, payload)
+                        .await
+                    {
+                        Ok(()) => {
+                            {
                                 let mut guard = inner.lock().expect("core app state poisoned");
-                                guard.app_state.last_error = Some(format!(
-                                    "auto answer failed for lesson {} problem {}: {}",
-                                    lesson.lesson_id.0.get(),
-                                    problem.problem_id.0.get(),
-                                    err
-                                ));
                                 Self::append_recent_event(
                                     &mut guard,
-                                    CoreEvent::Error {
-                                        code: "AUTO_ANSWER_FAILED",
-                                        message: err.to_string(),
+                                    CoreEvent::AutoAnswerSubmitted {
+                                        lesson_id: lesson.lesson_id,
+                                        problem_id: problem.problem_id,
                                     },
                                 );
                             }
+                            if config.notify_enabled {
+                                let notification = AppNotification {
+                                    title: "自动答题成功".to_string(),
+                                    body: format!(
+                                        "{} 已自动回答题目 {}",
+                                        lesson.course_name,
+                                        problem.problem_id.0.get()
+                                    ),
+                                };
+                                if deps.notifier.notify(notification.clone()).await.is_ok() {
+                                    Self::emit_event_with_inner(
+                                        inner,
+                                        AppEvent::Notification(notification),
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            let mut guard = inner.lock().expect("core app state poisoned");
+                            guard.app_state.last_error = Some(format!(
+                                "auto answer failed for lesson {} problem {}: {}",
+                                lesson.lesson_id.0.get(),
+                                problem.problem_id.0.get(),
+                                err
+                            ));
+                            Self::append_recent_event(
+                                &mut guard,
+                                CoreEvent::Error {
+                                    code: "AUTO_ANSWER_FAILED",
+                                    message: err.to_string(),
+                                },
+                            );
                         }
                     }
                 }
@@ -416,8 +422,7 @@ impl CoreAppService {
                 Err(err) => {
                     {
                         let mut guard = inner.lock().expect("core app state poisoned");
-                        guard.app_state.last_error =
-                            Some(format!("load session failed: {err}"));
+                        guard.app_state.last_error = Some(format!("load session failed: {err}"));
                         Self::append_recent_event(
                             &mut guard,
                             CoreEvent::Error {
@@ -436,8 +441,7 @@ impl CoreAppService {
                 Err(err) => {
                     {
                         let mut guard = inner.lock().expect("core app state poisoned");
-                        guard.app_state.last_error =
-                            Some(format!("load lessons failed: {err}"));
+                        guard.app_state.last_error = Some(format!("load lessons failed: {err}"));
                         Self::append_recent_event(
                             &mut guard,
                             CoreEvent::Error {
@@ -838,8 +842,8 @@ mod tests {
     };
     use crate::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
     use crate::domain::{
-        AnswerPayload, CheckinId, CourseId, Lesson, LessonId, LessonStatus, Problem,
-        ProblemId, ProblemOption, ProblemType,
+        AnswerPayload, CheckinId, CourseId, Lesson, LessonId, LessonStatus, Problem, ProblemId,
+        ProblemOption, ProblemType,
     };
 
     use super::{AppEvent, AppService};
@@ -933,10 +937,7 @@ mod tests {
             self.poll_qr_login(_scene_id).await
         }
 
-        async fn refresh_session(
-            &self,
-            _refresh_token: &str,
-        ) -> Result<AuthSession, ApiPortError> {
+        async fn refresh_session(&self, _refresh_token: &str) -> Result<AuthSession, ApiPortError> {
             let refreshed_access = format!("refreshed-{}", _refresh_token);
             Ok(AuthSession {
                 user_id: 42,
@@ -1331,15 +1332,19 @@ mod tests {
     #[tokio::test]
     async fn monitor_should_emit_auto_answer_event_when_problem_available() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        ports.lessons.lock().expect("lessons poisoned").push(Lesson {
-            lesson_id: LessonId(NonZeroU64::new(1001).expect("non-zero")),
-            course_id: CourseId(NonZeroU64::new(2001).expect("non-zero")),
-            course_name: "测试课程".to_string(),
-            teacher_name: "测试老师".to_string(),
-            started_at: None,
-            ended_at: None,
-            status: LessonStatus::Running,
-        });
+        ports
+            .lessons
+            .lock()
+            .expect("lessons poisoned")
+            .push(Lesson {
+                lesson_id: LessonId(NonZeroU64::new(1001).expect("non-zero")),
+                course_id: CourseId(NonZeroU64::new(2001).expect("non-zero")),
+                course_name: "测试课程".to_string(),
+                teacher_name: "测试老师".to_string(),
+                started_at: None,
+                ended_at: None,
+                status: LessonStatus::Running,
+            });
         ports
             .problems
             .lock()

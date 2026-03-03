@@ -24,7 +24,10 @@ pub struct UpdateInfo {
 #[derive(Debug, Clone, Error)]
 pub enum ApiPortError {
     #[error("api request failed ({context}): {detail}")]
-    RequestFailed { context: &'static str, detail: String },
+    RequestFailed {
+        context: &'static str,
+        detail: String,
+    },
 
     #[error("api protocol changed: {0}")]
     ProtocolChanged(String),

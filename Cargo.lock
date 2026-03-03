@@ -4301,6 +4301,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "keyring",
+ "log",
  "rca-core",
  "reqwest",
  "semver",

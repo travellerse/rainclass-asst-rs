@@ -48,6 +48,7 @@ impl JsonFileConfigRepository {
             auto_answer_enabled: true,
             answer_delay_ms: 500,
             notify_enabled: true,
+            webhook_url: String::new(),
             check_update_on_startup: true,
             active_tenant: TenantKind::Rain,
         }

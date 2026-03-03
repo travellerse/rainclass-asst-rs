@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub auto_answer_enabled: bool,
     pub answer_delay_ms: u64,
     pub notify_enabled: bool,
+    pub webhook_url: String,
     pub check_update_on_startup: bool,
     pub active_tenant: TenantKind,
 }
