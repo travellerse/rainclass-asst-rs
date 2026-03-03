@@ -20,6 +20,7 @@ use rca_infra::storage::{
     KeyringCredentialStore,
 };
 use rca_infra::update::GithubReleaseChecker;
+use tracing_subscriber::EnvFilter;
 
 slint::include_modules!();
 
@@ -97,6 +98,39 @@ fn format_core_event(event: &CoreEvent) -> (&'static str, String) {
         } => (
             "success",
             format!("自动签到完成 (课程 {:?}, 签到 {:?})", lesson_id, checkin_id),
+        ),
+        CoreEvent::DanmuPublished {
+            lesson_id,
+            user_name,
+            content,
+        } => (
+            "info",
+            format!(
+                "实时弹幕 (课程 {:?}) {}: {}",
+                lesson_id,
+                user_name.as_deref().unwrap_or("未知"),
+                content
+            ),
+        ),
+        CoreEvent::CallPaused {
+            lesson_id,
+            target_name,
+        } => (
+            "warning",
+            format!(
+                "老师发起了点名！点名目标：{} (课程 {:?})",
+                target_name, lesson_id
+            ),
+        ),
+        CoreEvent::PresentationUpdated {
+            lesson_id,
+            presentation_id,
+        } => (
+            "info",
+            format!(
+                "收到新的 PPT 页面: {} (课程 {:?})",
+                presentation_id, lesson_id
+            ),
         ),
         CoreEvent::Warning { code, message } => ("warning", format!("[{code}] {message}")),
         CoreEvent::Error { code, message } => ("error", format!("[{code}] {message}")),
@@ -283,6 +317,11 @@ fn spawn_login(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
     let runtime = Arc::new(tokio::runtime::Runtime::new()?);
 
     let paths = AppPaths::detect()?;

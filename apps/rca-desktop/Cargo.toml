@@ -12,6 +12,8 @@ rca-infra = { version = "0.1.0", path = "../../crates/rca-infra" }
 slint.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 
 [build-dependencies]
 slint-build.workspace = true

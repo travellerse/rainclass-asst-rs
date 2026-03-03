@@ -21,6 +21,8 @@ use rca_infra::storage::{
 };
 use rca_infra::update::GithubReleaseChecker;
 use tokio::time::{Duration, Instant, sleep};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "rca-cli", about = "RainClassroom Assistant CLI")]
@@ -47,8 +49,8 @@ enum Command {
     StartMonitor,
     StopMonitor,
     Monitor {
-        #[arg(long, default_value_t = 60)]
-        duration_secs: u64,
+        #[arg(long)]
+        duration_secs: Option<u64>,
     },
     Logout,
 }
@@ -193,7 +195,11 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    env_logger::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
 
     let cli = Cli::parse();
     let app = bootstrap_app()?;
@@ -294,33 +300,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::StartMonitor => {
             app.handle_command(AppCommand::StartMonitor).await?;
-            println!("监控已启动");
+            info!("监控已启动");
             let state = app.handle_query(AppQuery::GetAppState).await?;
             print_state(state)?;
         }
         Command::StopMonitor => {
             app.handle_command(AppCommand::StopMonitor).await?;
-            println!("监控已停止");
+            info!("监控已停止");
         }
         Command::Monitor { duration_secs } => {
             let mut rx = app.subscribe_events();
             app.handle_command(AppCommand::StartMonitor).await?;
-            println!("监控已启动，持续 {duration_secs} 秒。按 Ctrl+C 可提前退出。\n");
+            if let Some(secs) = duration_secs {
+                info!("监控已启动，持续 {secs} 秒。按 Ctrl+C 可提前退出。");
+            } else {
+                info!("监控已启动 (守护模式，无限期运行)。按 Ctrl+C 退出。");
+            }
 
-            let deadline = Instant::now() + Duration::from_secs(duration_secs);
+            let deadline = duration_secs.map(|secs| Instant::now() + Duration::from_secs(secs));
             loop {
                 tokio::select! {
                     _ = tokio::signal::ctrl_c() => {
-                        println!("收到 Ctrl+C，准备停止监控...");
+                        info!("收到 Ctrl+C，准备停止监控...");
                         break;
                     }
                     maybe_event = rx.recv() => {
                         if let Some(event) = maybe_event {
-                            println!("event: {event:?}");
+                            info!("event: {event:?}");
                         }
                     }
                     _ = sleep(Duration::from_millis(200)) => {
-                        if Instant::now() >= deadline {
+                        if let Some(d) = deadline
+                            && Instant::now() >= d
+                        {
                             break;
                         }
                     }
@@ -328,11 +340,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             app.handle_command(AppCommand::StopMonitor).await?;
-            println!("监控已停止");
+            info!("监控已停止");
         }
         Command::Logout => {
             app.handle_command(AppCommand::Logout).await?;
-            println!("已登出并清除本地会话");
+            info!("已登出并清除本地会话");
         }
     }
 
