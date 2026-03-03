@@ -245,6 +245,7 @@ impl CoreAppService {
         match event {
             LessonWsEvent::ProblemPublished { problem } => {
                 {
+                    tracing::info!("收到题目：{}", problem.title);
                     let mut guard = inner.lock().expect("core app state poisoned");
                     Self::append_recent_event(
                         &mut guard,
@@ -313,6 +314,11 @@ impl CoreAppService {
             }
             LessonWsEvent::CheckinOpened { checkin_id } => {
                 {
+                    tracing::info!(
+                        "签到开启: lesson={} checkin={}",
+                        lesson.lesson_id.0.get(),
+                        checkin_id.0.get()
+                    );
                     let mut guard = inner.lock().expect("core app state poisoned");
                     Self::append_recent_event(
                         &mut guard,
@@ -507,6 +513,7 @@ impl CoreAppService {
                 guard.app_state.current_lessons = lessons.clone();
                 guard.app_state.last_error = None;
                 for lesson in &lessons {
+                    tracing::info!("发现课程：{} ({})", lesson.course_name, lesson.teacher_name);
                     Self::append_recent_event(
                         &mut guard,
                         CoreEvent::LessonDiscovered {

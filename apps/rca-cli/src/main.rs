@@ -326,7 +326,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     maybe_event = rx.recv() => {
                         if let Some(event) = maybe_event {
-                            info!("event: {event:?}");
+                            match &event {
+                                rca_core::app::AppEvent::StateChanged(state) => {
+                                    tracing::debug!("App state synchronized: {:?}", state);
+                                    if let Some(err) = state.last_error.as_deref() {
+                                        tracing::error!("Core Engine Error: {}", err);
+                                    }
+                                }
+                                rca_core::app::AppEvent::Notification(n) => {
+                                    tracing::info!("System Notification - {}: {}", n.title, n.body);
+                                }
+                                rca_core::app::AppEvent::UpdateAvailable { version, url } => {
+                                    tracing::info!("发现新版本: {} ({})", version, url);
+                                }
+                            }
                         }
                     }
                     _ = sleep(Duration::from_millis(200)) => {
