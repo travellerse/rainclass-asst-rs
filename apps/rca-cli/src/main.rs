@@ -193,6 +193,8 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
+
     let cli = Cli::parse();
     let app = bootstrap_app()?;
 

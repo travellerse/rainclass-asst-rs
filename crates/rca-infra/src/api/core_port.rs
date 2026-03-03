@@ -214,7 +214,7 @@ impl YktApiPort {
             .headers(headers.clone())
             .json(&json!({
                 "source": 5,
-                "lessonId": lesson_id,
+                "lessonId": lesson_id.to_string(),
             }))
             .send()
             .await
@@ -294,10 +294,10 @@ impl RainClassroomWs for YktApiPort {
 
         let hello = json!({
             "op": "hello",
-            "userid": user_id,
+            "userid": user_id.to_string(),
             "role": "student",
             "auth": ws_auth_token,
-            "lessonid": lesson_id,
+            "lessonid": lesson_id.to_string(),
         })
         .to_string();
         socket
@@ -375,6 +375,10 @@ impl RainClassroomWs for YktApiPort {
                         })
                     }
                     "lessonfinished" => WsEventDto::LessonEnded { lesson_id },
+                    "hello" => {
+                        // Handshake acknowledged, ignore
+                        continue;
+                    }
                     _ => WsEventDto::Unknown {
                         raw_type: op.to_string(),
                         raw_payload: text.clone(),
@@ -489,6 +493,8 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|err| ApiPortError::request("on-lesson decode", err))?;
 
+        log::debug!("on-lesson raw response: {:?}", value);
+
         let data = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         let classrooms = data
             .get("onLessonClassrooms")
@@ -497,8 +503,16 @@ impl ApiPort for YktApiPort {
 
         let mut result = Vec::with_capacity(classrooms.len());
         for item in classrooms {
-            let lesson_id_raw = item.get("lessonId").and_then(Value::as_u64).unwrap_or(0);
-            let classroom_id_raw = item.get("classroomId").and_then(Value::as_u64).unwrap_or(0);
+            let lesson_id_raw = item
+                .get("lessonId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
+            let classroom_id_raw = item
+                .get("classroomId")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(0);
             if lesson_id_raw == 0 || classroom_id_raw == 0 {
                 continue;
             }
