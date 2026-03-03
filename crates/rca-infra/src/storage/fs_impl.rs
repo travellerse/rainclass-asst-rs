@@ -4,9 +4,7 @@ use async_trait::async_trait;
 use directories::ProjectDirs;
 use tokio::fs;
 
-use crate::storage::{
-    AppConfig, ConfigRepository, SessionRecord, SessionRepository, StorageError, TenantKind,
-};
+use crate::storage::{AppConfig, ConfigRepository, SessionRecord, SessionRepository, StorageError};
 
 #[derive(Debug, Clone)]
 pub struct AppPaths {
@@ -38,19 +36,6 @@ impl JsonFileConfigRepository {
     pub fn new(file_path: impl Into<PathBuf>) -> Self {
         Self {
             file_path: file_path.into(),
-        }
-    }
-
-    fn default_config() -> AppConfig {
-        AppConfig {
-            monitor_interval_secs: 5,
-            auto_checkin_enabled: true,
-            auto_answer_enabled: true,
-            answer_delay_ms: 500,
-            notify_enabled: true,
-            webhook_url: String::new(),
-            check_update_on_startup: true,
-            active_tenant: TenantKind::Rain,
         }
     }
 }
@@ -92,7 +77,7 @@ impl ConfigRepository for JsonFileConfigRepository {
                 Ok(config)
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                let default = Self::default_config();
+                let default = AppConfig::default();
                 self.save(&default).await?;
                 Ok(default)
             }

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::storage::StorageError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     pub monitor_interval_secs: u64,
     pub auto_checkin_enabled: bool,
@@ -15,12 +16,28 @@ pub struct AppConfig {
     pub active_tenant: TenantKind,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum TenantKind {
     Rain,
+    #[default]
     Hetang,
     Yangtze,
     YellowRiver,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            monitor_interval_secs: 5,
+            auto_checkin_enabled: true,
+            auto_answer_enabled: true,
+            answer_delay_ms: 500,
+            notify_enabled: true,
+            webhook_url: String::new(),
+            check_update_on_startup: true,
+            active_tenant: TenantKind::default(),
+        }
+    }
 }
 
 #[async_trait]
