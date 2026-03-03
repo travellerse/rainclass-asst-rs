@@ -524,6 +524,26 @@ impl CoreAppService {
                             }
                         };
 
+                        // Fallback: fetch historical problems immediately after ws connect
+                        // to prevent missing early questions
+                        if let Ok(history_problems) = deps_for_lesson
+                            .api
+                            .get_lesson_problems(&session_for_lesson, lesson_clone.lesson_id)
+                            .await
+                        {
+                            for problem in history_problems {
+                                Self::process_lesson_ws_event(
+                                    &deps_for_lesson,
+                                    &inner_for_lesson,
+                                    &lesson_clone,
+                                    &mut answered_problems,
+                                    &mut checked_checkins,
+                                    crate::app::ports::LessonWsEvent::ProblemPublished { problem },
+                                )
+                                .await;
+                            }
+                        }
+
                         loop {
                             tokio::select! {
                                 _ = stop_rx_lesson.changed() => {
@@ -1034,7 +1054,9 @@ mod tests {
             auto_answer_enabled: true,
             answer_delay_ms: 500,
             notify_enabled: true,
+            webhook_url: String::new(),
             check_update_on_startup: true,
+            tenant: "Hetang".to_string(),
             auth_state_hint: None,
         }
     }
@@ -1124,7 +1146,9 @@ mod tests {
             auto_answer_enabled: true,
             answer_delay_ms: 1200,
             notify_enabled: false,
+            webhook_url: "http://example.com/webhook".to_string(),
             check_update_on_startup: false,
+            tenant: "Rain".to_string(),
             auth_state_hint: Some(crate::auth::AuthState::Failed {
                 reason: "loaded".to_string(),
             }),
