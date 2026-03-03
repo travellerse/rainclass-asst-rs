@@ -3,8 +3,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use rca_core::app::ports::{
-    ConfigStorePort, NotifierPort, NotifyPortError, SessionStorePort,
-    StoragePortError, UpdateCheckerPort, UpdateInfo, UpdatePortError,
+    ConfigStorePort, NotifierPort, NotifyPortError, SessionStorePort, StoragePortError,
+    UpdateCheckerPort, UpdateInfo, UpdatePortError,
 };
 use rca_core::app::{AppConfigDto, AppNotification};
 use rca_core::auth::AuthSession;
@@ -72,23 +72,24 @@ impl CoreUpdateCheckerAdapter {
     }
 }
 
-
-
 #[async_trait]
 impl ConfigStorePort for CoreConfigStoreAdapter {
     async fn load_config(&self) -> Result<AppConfigDto, StoragePortError> {
-        let cfg = self
-            .inner
-            .load()
-            .await
-            .map_err(StoragePortError::load)?;
+        let cfg = self.inner.load().await.map_err(StoragePortError::load)?;
         Ok(AppConfigDto {
             monitor_interval_secs: cfg.monitor_interval_secs,
             auto_checkin_enabled: cfg.auto_checkin_enabled,
             auto_answer_enabled: cfg.auto_answer_enabled,
             answer_delay_ms: cfg.answer_delay_ms,
             notify_enabled: cfg.notify_enabled,
+            webhook_url: cfg.webhook_url.clone(),
             check_update_on_startup: cfg.check_update_on_startup,
+            tenant: match cfg.active_tenant {
+                TenantKind::Rain => "Rain".to_string(),
+                TenantKind::Hetang => "Hetang".to_string(),
+                TenantKind::Yangtze => "Yangtze".to_string(),
+                TenantKind::YellowRiver => "YellowRiver".to_string(),
+            },
             auth_state_hint: None,
         })
     }
@@ -100,13 +101,17 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
             auto_answer_enabled: config.auto_answer_enabled,
             answer_delay_ms: config.answer_delay_ms,
             notify_enabled: config.notify_enabled,
+            webhook_url: config.webhook_url.clone(),
             check_update_on_startup: config.check_update_on_startup,
-            active_tenant: TenantKind::Rain,
+            active_tenant: match config.tenant.as_str() {
+                "Rain" => TenantKind::Rain,
+                "Hetang" => TenantKind::Hetang,
+                "Yangtze" => TenantKind::Yangtze,
+                "YellowRiver" => TenantKind::YellowRiver,
+                _ => TenantKind::Hetang,
+            },
         };
-        self.inner
-            .save(&cfg)
-            .await
-            .map_err(StoragePortError::save)
+        self.inner.save(&cfg).await.map_err(StoragePortError::save)
     }
 }
 
@@ -220,7 +225,10 @@ impl NotifierPort for CoreNotifierAdapter {
 
 #[async_trait]
 impl UpdateCheckerPort for CoreUpdateCheckerAdapter {
-    async fn check_latest(&self, current_version: &str) -> Result<Option<UpdateInfo>, UpdatePortError> {
+    async fn check_latest(
+        &self,
+        current_version: &str,
+    ) -> Result<Option<UpdateInfo>, UpdatePortError> {
         let result = self
             .inner
             .check_latest(current_version)
@@ -234,4 +242,3 @@ impl UpdateCheckerPort for CoreUpdateCheckerAdapter {
         }))
     }
 }
-

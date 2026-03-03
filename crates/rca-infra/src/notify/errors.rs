@@ -7,4 +7,7 @@ pub enum NotifyError {
 
     #[error("platform error: {0}")]
     Platform(String),
+
+    #[error("send failed: {0}")]
+    SendFailed(String),
 }

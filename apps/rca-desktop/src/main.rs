@@ -5,8 +5,7 @@ use std::sync::Arc;
 
 use chrono::Local;
 use rca_core::app::{
-    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, CoreAppDeps,
-    CoreAppService,
+    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, CoreAppDeps, CoreAppService,
 };
 use rca_core::auth::AuthState;
 use rca_core::monitor::CoreEvent;
@@ -14,10 +13,11 @@ use rca_infra::api::{TenantHost, YktApiPort, YktApiPortConfig};
 use rca_infra::bridge::{
     CoreConfigStoreAdapter, CoreNotifierAdapter, CoreSessionStoreAdapter, CoreUpdateCheckerAdapter,
 };
-use rca_infra::notify::LoggingNotifier;
+use rca_infra::notify::{LoggingNotifier, MultiNotifier, WebhookNotifier};
 
 use rca_infra::storage::{
-    AppPaths, JsonFileConfigRepository, JsonFileSessionRepository, KeyringCredentialStore,
+    AppPaths, ConfigRepository, JsonFileConfigRepository, JsonFileSessionRepository,
+    KeyringCredentialStore,
 };
 use rca_infra::update::GithubReleaseChecker;
 
@@ -30,7 +30,9 @@ fn default_config() -> AppConfigDto {
         auto_answer_enabled: true,
         answer_delay_ms: 500,
         notify_enabled: true,
+        webhook_url: String::new(),
         check_update_on_startup: true,
+        tenant: "Hetang".to_string(),
         auth_state_hint: None,
     }
 }
@@ -59,33 +61,45 @@ fn format_core_event(event: &CoreEvent) -> (&'static str, String) {
     match event {
         CoreEvent::MonitorStarted { at } => {
             let local = at.with_timezone(&Local);
-            ("success", format!("监控已启动 ({})", local.format("%H:%M:%S")))
+            (
+                "success",
+                format!("监控已启动 ({})", local.format("%H:%M:%S")),
+            )
         }
         CoreEvent::MonitorStopped { at } => {
             let local = at.with_timezone(&Local);
             ("info", format!("监控已停止 ({})", local.format("%H:%M:%S")))
         }
-        CoreEvent::LessonDiscovered { lesson } => {
-            ("info", format!("发现课程：{} ({})", lesson.course_name, lesson.teacher_name))
-        }
+        CoreEvent::LessonDiscovered { lesson } => (
+            "info",
+            format!("发现课程：{} ({})", lesson.course_name, lesson.teacher_name),
+        ),
         CoreEvent::ProblemDiscovered { problem } => {
             ("warning", format!("收到题目：{}", problem.title))
         }
-        CoreEvent::CheckinDiscovered { lesson_id, checkin_id } => {
-            ("warning", format!("签到已开启 (课程 {:?}, 签到 {:?})", lesson_id, checkin_id))
-        }
-        CoreEvent::AutoAnswerSubmitted { lesson_id, problem_id } => {
-            ("success", format!("自动答题完成 (课程 {:?}, 题目 {:?})", lesson_id, problem_id))
-        }
-        CoreEvent::AutoCheckinSubmitted { lesson_id, checkin_id } => {
-            ("success", format!("自动签到完成 (课程 {:?}, 签到 {:?})", lesson_id, checkin_id))
-        }
-        CoreEvent::Warning { code, message } => {
-            ("warning", format!("[{code}] {message}"))
-        }
-        CoreEvent::Error { code, message } => {
-            ("error", format!("[{code}] {message}"))
-        }
+        CoreEvent::CheckinDiscovered {
+            lesson_id,
+            checkin_id,
+        } => (
+            "warning",
+            format!("签到已开启 (课程 {:?}, 签到 {:?})", lesson_id, checkin_id),
+        ),
+        CoreEvent::AutoAnswerSubmitted {
+            lesson_id,
+            problem_id,
+        } => (
+            "success",
+            format!("自动答题完成 (课程 {:?}, 题目 {:?})", lesson_id, problem_id),
+        ),
+        CoreEvent::AutoCheckinSubmitted {
+            lesson_id,
+            checkin_id,
+        } => (
+            "success",
+            format!("自动签到完成 (课程 {:?}, 签到 {:?})", lesson_id, checkin_id),
+        ),
+        CoreEvent::Warning { code, message } => ("warning", format!("[{code}] {message}")),
+        CoreEvent::Error { code, message } => ("error", format!("[{code}] {message}")),
     }
 }
 
@@ -107,7 +121,12 @@ fn sync_ui_state(ui: &AppWindow, app: &CoreAppService, runtime: &tokio::runtime:
 
             ui.set_monitor_running(state.monitor_running);
             ui.set_monitor_status_text(
-                if state.monitor_running { "运行中" } else { "未启动" }.into(),
+                if state.monitor_running {
+                    "运行中"
+                } else {
+                    "未启动"
+                }
+                .into(),
             );
             ui.set_last_error_text(state.last_error.unwrap_or_default().into());
 
@@ -157,7 +176,9 @@ fn sync_config_to_ui(ui: &AppWindow, app: &CoreAppService, runtime: &tokio::runt
         ui.set_setting_auto_answer(config.auto_answer_enabled);
         ui.set_setting_answer_delay(config.answer_delay_ms as i32);
         ui.set_setting_notify_enabled(config.notify_enabled);
+        ui.set_setting_webhook_url(config.webhook_url.into());
         ui.set_setting_check_update_on_startup(config.check_update_on_startup);
+        ui.set_setting_active_tenant(config.tenant.into());
     }
 }
 
@@ -268,16 +289,43 @@ fn main() -> Result<(), Box<dyn Error>> {
     let config_repo = Arc::new(JsonFileConfigRepository::new(paths.config_file));
     let session_repo = Arc::new(JsonFileSessionRepository::new(paths.session_file));
     let credential_store = Arc::new(KeyringCredentialStore);
-    let notifier = Arc::new(LoggingNotifier);
+
+    // Read config manually or default to Hetang for ApiPort and Webhook initialization
+    let initial_config = runtime.block_on(config_repo.load()).ok();
+
+    let initial_tenant = initial_config
+        .as_ref()
+        .map(|cfg| match cfg.active_tenant {
+            rca_infra::storage::TenantKind::Rain => TenantHost::Rain,
+            rca_infra::storage::TenantKind::Hetang => TenantHost::Hetang,
+            rca_infra::storage::TenantKind::Yangtze => TenantHost::Yangtze,
+            rca_infra::storage::TenantKind::YellowRiver => TenantHost::YellowRiver,
+        })
+        .unwrap_or(TenantHost::Hetang);
+
+    let mut notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> = vec![Box::new(LoggingNotifier)];
+
+    if let Some(cfg) = initial_config.as_ref()
+        && !cfg.webhook_url.is_empty()
+    {
+        notifiers.push(Box::new(WebhookNotifier::new(&cfg.webhook_url)));
+    }
+
+    let notifier = Arc::new(MultiNotifier::new(notifiers));
+
     let update_checker = Arc::new(GithubReleaseChecker::new(
         "travellerse",
         "RainClassroomAssistant",
     )?);
 
-    let api_port: Arc<dyn rca_core::app::ports::ApiPort> = Arc::new(YktApiPort::new(YktApiPortConfig {
-        tenant: TenantHost::Hetang,
-        timeout_secs: 15,
-    })?);
+    // ── Create UI ──
+    let ui = AppWindow::new()?;
+
+    let api_port: Arc<dyn rca_core::app::ports::ApiPort> =
+        Arc::new(YktApiPort::new(YktApiPortConfig {
+            tenant: initial_tenant,
+            timeout_secs: 15,
+        })?);
 
     let config_port = Arc::new(CoreConfigStoreAdapter::new(config_repo));
     let session_port = Arc::new(CoreSessionStoreAdapter::new(session_repo, credential_store));
@@ -313,8 +361,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         let _ = runtime.block_on(app.handle_command(AppCommand::CheckUpdate));
     }
 
-    // ── Create UI ──
-    let ui = AppWindow::new()?;
+    // ── Create UI Done above ──
 
     // Initial sync
     sync_ui_state(&ui, &app, &runtime);
@@ -408,7 +455,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 auto_answer_enabled: ui.get_setting_auto_answer(),
                 answer_delay_ms: ui.get_setting_answer_delay().max(0) as u64,
                 notify_enabled: ui.get_setting_notify_enabled(),
+                webhook_url: ui.get_setting_webhook_url().to_string(),
                 check_update_on_startup: ui.get_setting_check_update_on_startup(),
+                tenant: ui.get_setting_active_tenant().to_string(),
                 auth_state_hint: None,
             };
             spawn_command(

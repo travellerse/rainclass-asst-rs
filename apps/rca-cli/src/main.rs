@@ -60,7 +60,9 @@ fn default_config() -> AppConfigDto {
         auto_answer_enabled: true,
         answer_delay_ms: 500,
         notify_enabled: true,
+        webhook_url: String::new(),
         check_update_on_startup: true,
+        tenant: "Hetang".to_string(),
         auth_state_hint: None,
     }
 }
@@ -81,7 +83,10 @@ fn print_state(result: AppQueryResult) -> Result<(), Box<dyn Error>> {
         return Err("unexpected query result type for state".into());
     };
 
-    println!("auth_state      : {}", auth_state_summary(&state.auth_state));
+    println!(
+        "auth_state      : {}",
+        auth_state_summary(&state.auth_state)
+    );
     println!("monitor_running : {}", state.monitor_running);
     println!("lessons         : {}", state.current_lessons.len());
     println!("recent_events   : {}", state.recent_events.len());
@@ -90,7 +95,6 @@ fn print_state(result: AppQueryResult) -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
-
 
 fn decode_qr_from_image(image: DynamicImage) -> Option<String> {
     let gray = image.to_luma8();
@@ -144,10 +148,7 @@ fn print_login_qr(payload: &str) {
 
     match QrCode::new(trimmed.as_bytes()) {
         Ok(code) => {
-            let rendered = code
-                .render::<unicode::Dense1x2>()
-                .quiet_zone(true)
-                .build();
+            let rendered = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
             println!("请使用微信扫码（终端二维码）：\n");
             println!("{rendered}");
             println!("扫码内容: {trimmed}");
@@ -170,10 +171,11 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
         "RainClassroomAssistant",
     )?);
 
-    let api_port: Arc<dyn rca_core::app::ports::ApiPort> = Arc::new(YktApiPort::new(YktApiPortConfig {
-        tenant: TenantHost::Hetang,
-        timeout_secs: 15,
-    })?);
+    let api_port: Arc<dyn rca_core::app::ports::ApiPort> =
+        Arc::new(YktApiPort::new(YktApiPortConfig {
+            tenant: TenantHost::Hetang,
+            timeout_secs: 15,
+        })?);
 
     let app = Arc::new(CoreAppService::new(
         CoreAppDeps {
@@ -210,10 +212,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let state = app.handle_query(AppQuery::GetAppState).await?;
             let scene_id = match state {
                 AppQueryResult::State(state) => match state.auth_state {
-                    AuthState::WaitingQrScan {
-                        scene_id,
-                        token,
-                    } => {
+                    AuthState::WaitingQrScan { scene_id, token } => {
                         println!("scene_id        : {scene_id}");
                         println!("token           : {token}");
                         let terminal_payload = resolve_terminal_qr_payload(&token).await;
@@ -226,12 +225,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                     AuthState::WaitingConfirm { scene_id } => scene_id,
                     other => {
-                        return Err(format!("unexpected auth state after login start: {other:?}").into());
+                        return Err(
+                            format!("unexpected auth state after login start: {other:?}").into(),
+                        );
                     }
                 },
                 _ => return Err("unexpected query result type for state".into()),
             };
-            let timeout_secs = (attempts as u64).saturating_mul(interval_secs.max(1)).max(1);
+            let timeout_secs = (attempts as u64)
+                .saturating_mul(interval_secs.max(1))
+                .max(1);
             app.handle_command(AppCommand::WaitLogin {
                 scene_id,
                 timeout_secs,
