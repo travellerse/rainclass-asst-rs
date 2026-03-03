@@ -313,7 +313,14 @@ impl RainClassroomWs for YktApiPort {
                     Ok(Message::Binary(bin)) => String::from_utf8_lossy(&bin).to_string(),
                     Ok(_) => continue,
                     Err(err) => {
-                        let _ = tx.send(Err(ApiError::ws_receive(err.to_string()))).await;
+                        let err_str = err.to_string();
+                        if err_str
+                            .contains("peer closed connection without sending TLS close_notify")
+                        {
+                            // Gracefully handle unexpected EOF caused by lack of TLS close_notify from server
+                            break;
+                        }
+                        let _ = tx.send(Err(ApiError::ws_receive(err_str))).await;
                         break;
                     }
                 };

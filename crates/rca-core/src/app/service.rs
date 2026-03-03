@@ -426,6 +426,7 @@ impl CoreAppService {
                 );
             }
             LessonWsEvent::LessonEnded => {
+                tracing::info!("Lesson ended: lesson_id={}", lesson.lesson_id.0.get());
                 let mut guard = inner.lock().expect("core app state poisoned");
                 Self::append_recent_event(
                     &mut guard,
@@ -435,6 +436,7 @@ impl CoreAppService {
                 );
             }
             LessonWsEvent::Warning { message } => {
+                tracing::warn!("Warning received: {}", message);
                 let mut guard = inner.lock().expect("core app state poisoned");
                 Self::append_recent_event(
                     &mut guard,
