@@ -373,6 +373,11 @@ impl CoreAppService {
                 }
             }
             LessonWsEvent::PresentationUpdated { presentation_id } => {
+                tracing::info!(
+                    "Presentation updated: presentation_id={} lesson_id={}",
+                    presentation_id,
+                    lesson.lesson_id.0.get()
+                );
                 let mut guard = inner.lock().expect("core app state poisoned");
                 Self::append_recent_event(
                     &mut guard,
@@ -383,6 +388,11 @@ impl CoreAppService {
                 );
             }
             LessonWsEvent::CallPaused { target_name } => {
+                tracing::info!(
+                    "Roll-call initiated: target={} lesson_id={}",
+                    target_name,
+                    lesson.lesson_id.0.get()
+                );
                 let mut guard = inner.lock().expect("core app state poisoned");
                 Self::append_recent_event(
                     &mut guard,
@@ -393,6 +403,12 @@ impl CoreAppService {
                 );
             }
             LessonWsEvent::DanmuPublished { user_name, content } => {
+                tracing::info!(
+                    "Danmu received: sender={:?} content={:?} lesson_id={}",
+                    user_name,
+                    content,
+                    lesson.lesson_id.0.get()
+                );
                 let mut guard = inner.lock().expect("core app state poisoned");
                 Self::append_recent_event(
                     &mut guard,
