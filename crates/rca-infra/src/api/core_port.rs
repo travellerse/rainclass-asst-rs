@@ -1110,6 +1110,18 @@ impl ApiPort for YktApiPort {
                         };
                         LessonWsEvent::CheckinOpened { checkin_id }
                     }
+                    Ok(WsEventDto::DanmuPublished(danmu)) => LessonWsEvent::DanmuPublished {
+                        user_name: danmu.user_name,
+                        content: danmu.content,
+                    },
+                    Ok(WsEventDto::CallPaused(call)) => LessonWsEvent::CallPaused {
+                        target_name: call.target_name,
+                    },
+                    Ok(WsEventDto::PresentationUpdated(pres)) => {
+                        LessonWsEvent::PresentationUpdated {
+                            presentation_id: pres.presentation_id,
+                        }
+                    }
                     Ok(WsEventDto::LessonEnded { .. }) => LessonWsEvent::LessonEnded,
                     Ok(WsEventDto::Unknown { raw_type, .. }) => LessonWsEvent::Warning {
                         message: format!("unknown ws op: {raw_type}"),

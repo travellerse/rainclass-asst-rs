@@ -8,10 +8,26 @@ use crate::domain::{AnswerPayload, CheckinId, Lesson, LessonId, Problem, Problem
 
 #[derive(Debug, Clone)]
 pub enum LessonWsEvent {
-    ProblemPublished { problem: Problem },
-    CheckinOpened { checkin_id: CheckinId },
+    ProblemPublished {
+        problem: Problem,
+    },
+    CheckinOpened {
+        checkin_id: CheckinId,
+    },
     LessonEnded,
-    Warning { message: String },
+    DanmuPublished {
+        user_name: Option<String>,
+        content: String,
+    },
+    CallPaused {
+        target_name: String,
+    },
+    PresentationUpdated {
+        presentation_id: u64,
+    },
+    Warning {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]

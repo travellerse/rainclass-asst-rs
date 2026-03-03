@@ -372,6 +372,37 @@ impl CoreAppService {
                     }
                 }
             }
+            LessonWsEvent::PresentationUpdated { presentation_id } => {
+                let mut guard = inner.lock().expect("core app state poisoned");
+                Self::append_recent_event(
+                    &mut guard,
+                    CoreEvent::PresentationUpdated {
+                        lesson_id: lesson.lesson_id,
+                        presentation_id,
+                    },
+                );
+            }
+            LessonWsEvent::CallPaused { target_name } => {
+                let mut guard = inner.lock().expect("core app state poisoned");
+                Self::append_recent_event(
+                    &mut guard,
+                    CoreEvent::CallPaused {
+                        lesson_id: lesson.lesson_id,
+                        target_name,
+                    },
+                );
+            }
+            LessonWsEvent::DanmuPublished { user_name, content } => {
+                let mut guard = inner.lock().expect("core app state poisoned");
+                Self::append_recent_event(
+                    &mut guard,
+                    CoreEvent::DanmuPublished {
+                        lesson_id: lesson.lesson_id,
+                        user_name,
+                        content,
+                    },
+                );
+            }
             LessonWsEvent::LessonEnded => {
                 let mut guard = inner.lock().expect("core app state poisoned");
                 Self::append_recent_event(

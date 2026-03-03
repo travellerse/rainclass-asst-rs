@@ -49,6 +49,19 @@ pub enum CoreEvent {
         lesson_id: LessonId,
         checkin_id: CheckinId,
     },
+    DanmuPublished {
+        lesson_id: LessonId,
+        user_name: Option<String>,
+        content: String,
+    },
+    CallPaused {
+        lesson_id: LessonId,
+        target_name: String,
+    },
+    PresentationUpdated {
+        lesson_id: LessonId,
+        presentation_id: u64,
+    },
     Warning {
         code: &'static str,
         message: String,

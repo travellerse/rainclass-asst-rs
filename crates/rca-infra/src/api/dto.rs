@@ -29,9 +29,33 @@ pub struct CheckinDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DanmuDto {
+    pub lesson_id: u64,
+    pub user_id: String,
+    pub user_name: Option<String>,
+    pub content: String,
+    pub published_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallPausedDto {
+    pub lesson_id: u64,
+    pub target_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresentationUpdatedDto {
+    pub lesson_id: u64,
+    pub presentation_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WsEventDto {
     ProblemPublished(ProblemDto),
     CheckinOpened(CheckinDto),
+    DanmuPublished(DanmuDto),
+    CallPaused(CallPausedDto),
+    PresentationUpdated(PresentationUpdatedDto),
     LessonEnded {
         lesson_id: u64,
     },
