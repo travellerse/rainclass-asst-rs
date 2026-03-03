@@ -14,12 +14,8 @@ use rca_infra::api::{TenantHost, YktApiPort, YktApiPortConfig};
 use rca_infra::bridge::{
     CoreConfigStoreAdapter, CoreNotifierAdapter, CoreSessionStoreAdapter, CoreUpdateCheckerAdapter,
 };
-#[cfg(feature = "mock-api")]
-use rca_infra::bridge::CoreApiPortFromMock;
 use rca_infra::notify::LoggingNotifier;
-use rca_infra::runtime_mode::{ApiRuntimeMode, read_env_bool, resolve_api_runtime_mode};
-#[cfg(feature = "mock-api")]
-use rca_infra::mock::MockInfra;
+
 use rca_infra::storage::{
     AppPaths, JsonFileConfigRepository, JsonFileSessionRepository, KeyringCredentialStore,
 };
@@ -95,13 +91,6 @@ fn print_state(result: AppQueryResult) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn print_api_mode(use_real_api: bool) {
-    if use_real_api {
-        println!("api_mode        : real");
-    } else {
-        println!("api_mode        : mock");
-    }
-}
 
 fn decode_qr_from_image(image: DynamicImage) -> Option<String> {
     let gray = image.to_luma8();
@@ -158,7 +147,6 @@ fn print_login_qr(payload: &str) {
             let rendered = code
                 .render::<unicode::Dense1x2>()
                 .quiet_zone(true)
-                .module_dimensions(2, 1)
                 .build();
             println!("请使用微信扫码（终端二维码）：\n");
             println!("{rendered}");
@@ -171,7 +159,7 @@ fn print_login_qr(payload: &str) {
     }
 }
 
-fn bootstrap_app() -> Result<(Arc<CoreAppService>, ApiRuntimeMode, &'static str), Box<dyn Error>> {
+fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
     let paths = AppPaths::detect()?;
     let config_repo = Arc::new(JsonFileConfigRepository::new(paths.config_file));
     let session_repo = Arc::new(JsonFileSessionRepository::new(paths.session_file));
@@ -182,28 +170,10 @@ fn bootstrap_app() -> Result<(Arc<CoreAppService>, ApiRuntimeMode, &'static str)
         "RainClassroomAssistant",
     )?);
 
-    let api_mode = resolve_api_runtime_mode();
-
-    let api_port: Arc<dyn rca_core::app::ports::ApiPort> = match api_mode.mode {
-        ApiRuntimeMode::Real => Arc::new(YktApiPort::new(YktApiPortConfig {
-            tenant: TenantHost::Hetang,
-            timeout_secs: 15,
-        })?),
-        ApiRuntimeMode::Mock => {
-            #[cfg(feature = "mock-api")]
-            {
-                let mock_api = Arc::new(MockInfra::new(default_config()));
-                Arc::new(CoreApiPortFromMock::new(mock_api))
-            }
-            #[cfg(not(feature = "mock-api"))]
-            {
-                return Err(
-                    "当前 rca-cli 构建未启用 mock-api 特性，请使用 RCA_API_MODE=real 或以 --features mock-api 重新构建"
-                        .into(),
-                );
-            }
-        }
-    };
+    let api_port: Arc<dyn rca_core::app::ports::ApiPort> = Arc::new(YktApiPort::new(YktApiPortConfig {
+        tenant: TenantHost::Hetang,
+        timeout_secs: 15,
+    })?);
 
     let app = Arc::new(CoreAppService::new(
         CoreAppDeps {
@@ -216,38 +186,19 @@ fn bootstrap_app() -> Result<(Arc<CoreAppService>, ApiRuntimeMode, &'static str)
         default_config(),
     ));
 
-    Ok((app, api_mode.mode, api_mode.source))
+    Ok(app)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let (app, api_mode, api_mode_source) = bootstrap_app()?;
-    let strict_env = read_env_bool("RCA_STRICT_ENV").unwrap_or(false);
-
-    if strict_env && api_mode_source == "RCA_USE_REAL_API" {
-        return Err(
-            "RCA_STRICT_ENV=1 时不允许使用旧变量 RCA_USE_REAL_API，请改用 RCA_API_MODE=real|mock"
-                .into(),
-        );
-    }
-
-    if api_mode_source == "RCA_USE_REAL_API" {
-        eprintln!(
-            "warning: 环境变量 RCA_USE_REAL_API 已进入兼容期，建议改用 RCA_API_MODE=real|mock"
-        );
-    }
+    let app = bootstrap_app()?;
 
     app.handle_command(AppCommand::LoadConfig).await?;
     app.handle_command(AppCommand::RestoreSession).await?;
 
     match cli.command {
         Command::Status => {
-            print_api_mode(matches!(api_mode, ApiRuntimeMode::Real));
-            println!("api_mode_source : {api_mode_source}");
-            if matches!(api_mode, ApiRuntimeMode::Mock) {
-                println!("warning         : mock 仅用于兼容，建议迁移到真实 API");
-            }
             let state = app.handle_query(AppQuery::GetAppState).await?;
             print_state(state)?;
         }

@@ -257,7 +257,7 @@ rainclass-asst-rs/
 - `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
-- 必要场景加入集成测试（mock server / fake notifier / temp fs）
+- 必要场景加入集成测试（fake notifier / temp fs）
 
 ### 12.2 测试策略
 

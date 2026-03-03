@@ -14,12 +14,8 @@ use rca_infra::api::{TenantHost, YktApiPort, YktApiPortConfig};
 use rca_infra::bridge::{
     CoreConfigStoreAdapter, CoreNotifierAdapter, CoreSessionStoreAdapter, CoreUpdateCheckerAdapter,
 };
-#[cfg(feature = "mock-api")]
-use rca_infra::bridge::CoreApiPortFromMock;
 use rca_infra::notify::LoggingNotifier;
-use rca_infra::runtime_mode::{ApiRuntimeMode, read_env_bool, resolve_api_runtime_mode};
-#[cfg(feature = "mock-api")]
-use rca_infra::mock::MockInfra;
+
 use rca_infra::storage::{
     AppPaths, JsonFileConfigRepository, JsonFileSessionRepository, KeyringCredentialStore,
 };
@@ -278,39 +274,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         "RainClassroomAssistant",
     )?);
 
-    let api_mode = resolve_api_runtime_mode();
-    let strict_env = read_env_bool("RCA_STRICT_ENV").unwrap_or(false);
-    if strict_env && api_mode.legacy_env_used {
-        return Err(
-            "RCA_STRICT_ENV=1 时不允许使用旧变量 RCA_USE_REAL_API，请改用 RCA_API_MODE=real|mock"
-                .into(),
-        );
-    }
-    let api_mode_text = match api_mode.mode {
-        ApiRuntimeMode::Real => format!("真实 API（{}）", api_mode.source),
-        ApiRuntimeMode::Mock => format!("Mock API（{}）", api_mode.source),
-    };
-
-    let api_port: Arc<dyn rca_core::app::ports::ApiPort> = match api_mode.mode {
-        ApiRuntimeMode::Real => Arc::new(YktApiPort::new(YktApiPortConfig {
-            tenant: TenantHost::Hetang,
-            timeout_secs: 15,
-        })?),
-        ApiRuntimeMode::Mock => {
-            #[cfg(feature = "mock-api")]
-            {
-                let mock_api = Arc::new(MockInfra::new(default_config()));
-                Arc::new(CoreApiPortFromMock::new(mock_api))
-            }
-            #[cfg(not(feature = "mock-api"))]
-            {
-                return Err(
-                    "当前构建未启用 mock-api 特性，请使用 RCA_API_MODE=real 或以 --features mock-api 重新构建"
-                        .into(),
-                );
-            }
-        }
-    };
+    let api_port: Arc<dyn rca_core::app::ports::ApiPort> = Arc::new(YktApiPort::new(YktApiPortConfig {
+        tenant: TenantHost::Hetang,
+        timeout_secs: 15,
+    })?);
 
     let config_port = Arc::new(CoreConfigStoreAdapter::new(config_repo));
     let session_port = Arc::new(CoreSessionStoreAdapter::new(session_repo, credential_store));
@@ -348,12 +315,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // ── Create UI ──
     let ui = AppWindow::new()?;
-    ui.set_api_mode_text(api_mode_text.into());
-    if api_mode.legacy_env_used {
-        ui.set_last_error_text(
-            "检测到旧变量 RCA_USE_REAL_API，建议改为 RCA_API_MODE=real|mock".into(),
-        );
-    }
 
     // Initial sync
     sync_ui_state(&ui, &app, &runtime);

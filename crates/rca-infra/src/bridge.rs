@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use rca_core::app::ports::{
-    ApiPort, ApiPortError, ConfigStorePort, NotifierPort, NotifyPortError, SessionStorePort,
+    ConfigStorePort, NotifierPort, NotifyPortError, SessionStorePort,
     StoragePortError, UpdateCheckerPort, UpdateInfo, UpdatePortError,
 };
 use rca_core::app::{AppConfigDto, AppNotification};
@@ -72,16 +72,7 @@ impl CoreUpdateCheckerAdapter {
     }
 }
 
-#[derive(Clone)]
-pub struct CoreApiPortFromMock {
-    inner: Arc<dyn ApiPort>,
-}
 
-impl CoreApiPortFromMock {
-    pub fn new(inner: Arc<dyn ApiPort>) -> Self {
-        Self { inner }
-    }
-}
 
 #[async_trait]
 impl ConfigStorePort for CoreConfigStoreAdapter {
@@ -244,74 +235,3 @@ impl UpdateCheckerPort for CoreUpdateCheckerAdapter {
     }
 }
 
-#[async_trait]
-impl ApiPort for CoreApiPortFromMock {
-    async fn get_on_lessons(
-        &self,
-        session: &AuthSession,
-    ) -> Result<Vec<rca_core::domain::Lesson>, ApiPortError> {
-        self.inner.get_on_lessons(session).await
-    }
-
-    async fn get_lesson_problems(
-        &self,
-        session: &AuthSession,
-        lesson_id: rca_core::domain::LessonId,
-    ) -> Result<Vec<rca_core::domain::Problem>, ApiPortError> {
-        self.inner.get_lesson_problems(session, lesson_id).await
-    }
-
-    async fn submit_answer(
-        &self,
-        session: &AuthSession,
-        lesson_id: rca_core::domain::LessonId,
-        problem_id: rca_core::domain::ProblemId,
-        payload: rca_core::domain::AnswerPayload,
-    ) -> Result<(), ApiPortError> {
-        self.inner
-            .submit_answer(session, lesson_id, problem_id, payload)
-            .await
-    }
-
-    async fn submit_checkin(
-        &self,
-        session: &AuthSession,
-        lesson_id: rca_core::domain::LessonId,
-        checkin_id: rca_core::domain::CheckinId,
-    ) -> Result<(), ApiPortError> {
-        self.inner
-            .submit_checkin(session, lesson_id, checkin_id)
-            .await
-    }
-
-    async fn start_qr_login(&self) -> Result<rca_core::auth::QrLoginBootstrap, ApiPortError> {
-        self.inner.start_qr_login().await
-    }
-
-    async fn poll_qr_login(
-        &self,
-        scene_id: &str,
-    ) -> Result<rca_core::auth::QrLoginProgress, ApiPortError> {
-        self.inner.poll_qr_login(scene_id).await
-    }
-
-    async fn wait_qr_login(
-        &self,
-        scene_id: &str,
-        timeout_secs: u64,
-    ) -> Result<rca_core::auth::QrLoginProgress, ApiPortError> {
-        self.inner.wait_qr_login(scene_id, timeout_secs).await
-    }
-
-    async fn refresh_session(&self, refresh_token: &str) -> Result<AuthSession, ApiPortError> {
-        self.inner.refresh_session(refresh_token).await
-    }
-
-    async fn connect_lesson_stream(
-        &self,
-        session: &AuthSession,
-        lesson_id: rca_core::domain::LessonId,
-    ) -> Result<tokio::sync::mpsc::Receiver<rca_core::app::ports::LessonWsEvent>, ApiPortError> {
-        self.inner.connect_lesson_stream(session, lesson_id).await
-    }
-}

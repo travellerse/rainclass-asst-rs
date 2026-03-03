@@ -3,7 +3,7 @@
 Rust 重构版本的雨课堂助手，采用分层架构：
 
 - `rca-core`：应用服务、领域模型、端口定义
-- `rca-infra`：API 适配、存储、更新、通知、mock 实现
+- `rca-infra`：API 适配、存储、更新、通知实现
 - `rca-cli`：命令行入口（无 GUI）
 - `rca-desktop`：Slint 桌面端
 
@@ -19,21 +19,6 @@ Rust 重构版本的雨课堂助手，采用分层架构：
 `rca-cli` 与 `rca-desktop` 的 API 默认策略一致：
 
 - 所有构建默认 `真实 API`
-
-可使用环境变量覆盖：
-
-- `RCA_API_MODE=real|mock|auto`：推荐变量（当前 `auto` 等价默认真实 API）
-- `RCA_USE_REAL_API=1|0`：兼容旧变量（后续会逐步废弃）
-- `RCA_STRICT_ENV=1`：严格模式，禁止使用 `RCA_USE_REAL_API`
-
-> 迁移说明：Mock 仍保留用于开发和回归，但将逐步从“默认行为”过渡为“显式启用的兼容模式”。
->
-> 时间窗（计划）：
-> - `2026 Q1-Q2`：保留 `RCA_USE_REAL_API`，启动废弃告警
-> - `2026 Q3`：默认在 CI/发布流程启用严格模式
-> - `2026 Q4`：移除 `RCA_USE_REAL_API` 解析逻辑（仅保留 `RCA_API_MODE`）
->
-> 代码现状：`mock-api` 已改为显式编译特性，默认构建不包含 mock 路径。
 
 ## 快速开始
 
@@ -59,13 +44,6 @@ Rust 重构版本的雨课堂助手，采用分层架构：
 
     ```bash
     cargo run -p rca-cli -- status
-    ```
-
-5. 若需本地 mock 调试（显式开启特性）：
-
-    ```bash
-    RCA_API_MODE=mock cargo run -p rca-cli --features mock-api -- status
-    RCA_API_MODE=mock cargo run -p rca-desktop --features mock-api
     ```
 
 ## CLI 命令
