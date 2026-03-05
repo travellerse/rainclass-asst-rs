@@ -5,6 +5,7 @@ export global Theme {
     out property <color> primary: #8b5cf6;       // Purple primary
     out property <color> primary-hover: #7c3aed;
     out property <color> primary-light: #ede9fe;
+    out property <color> primary-glow: rgba(139, 92, 246, 0.45);
     out property <color> accent: #3b82f6;        // Blue secondary for contrast
 
     // ── Semantic Colors ──
@@ -16,12 +17,14 @@ export global Theme {
     out property <color> error-light: #fee2e2;
 
     // ── Neutrals (Glassmorphism & Depth) ──
-    out property <color> bg: #09090b;            // Very dark, almost black
-    out property <color> bg-surface: rgba(24, 24, 27, 0.8);     // Slightly transparent card
-    out property <color> bg-card: rgba(39, 39, 42, 0.6);        // Inner card
+    out property <color> bg: #000000;            // Deep black for stronger contrast
+    out property <color> bg-surface: rgba(24, 24, 27, 0.62);    // Glass-like surface
+    out property <color> bg-card: rgba(39, 39, 42, 0.5);        // Inner card
     out property <color> bg-hover: rgba(63, 63, 70, 0.8);
     out property <color> border: rgba(255, 255, 255, 0.1);
     out property <color> border-light: rgba(255, 255, 255, 0.05);
+    out property <color> border-active: rgba(139, 92, 246, 0.5);
+    out property <color> hero-bg: rgba(61, 32, 122, 0.30);
 
     // ── Text ──
     out property <color> text-primary: #fafafa;
@@ -40,6 +43,12 @@ export global Theme {
     out property <length> spacing-md: 18px;
     out property <length> spacing-lg: 28px;
     out property <length> spacing-xl: 40px;
+
+    // ── Shadow & Motion ──
+    out property <length> shadow-blur-sm: 8px;
+    out property <length> shadow-blur-lg: 18px;
+    out property <duration> transition-fast: 150ms;
+    out property <duration> transition-smooth: 300ms;
 
     // ── Typography (Sleek proportions) ──
     out property <length> font-xs: 12px;

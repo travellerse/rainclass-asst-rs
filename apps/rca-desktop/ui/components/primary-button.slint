@@ -1,0 +1,35 @@
+import { Theme } from "../theme.slint";
+
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> disabled: false;
+    callback clicked();
+
+    min-width: 116px;
+    height: 36px;
+    border-radius: Theme.radius-sm;
+    border-width: 1px;
+    border-color: Theme.primary;
+    background: disabled ? Theme.bg-card : touch.has-hover ? Theme.primary-hover : Theme.primary;
+    drop-shadow-blur: disabled ? 0px : Theme.shadow-blur-sm;
+    drop-shadow-color: disabled ? transparent : Theme.primary-glow;
+
+    animate background { duration: Theme.transition-fast; }
+    animate drop-shadow-color { duration: Theme.transition-fast; }
+
+    Text {
+        text: root.text;
+        color: disabled ? Theme.text-muted : Theme.text-on-primary;
+        font-size: Theme.font-sm;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: !root.disabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}

@@ -1,0 +1,264 @@
+import {
+    VerticalBox,
+    HorizontalBox,
+    ScrollView,
+    Button,
+} from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { GlassCard } from "../components/glass-card.slint";
+import { PrimaryButton } from "../components/primary-button.slint";
+import { LessonRow } from "../models.slint";
+
+export component OverviewPage inherits Rectangle {
+    in property <string> auth-status-text;
+    in property <string> auth-status-kind;
+    in property <string> monitor-status-text;
+    in property <bool> monitor-running;
+    in property <string> last-error-text;
+    in property <[LessonRow]> lessons;
+    in-out property <int> selected-lesson-index: -1;
+
+    callback login-clicked();
+    callback logout-clicked();
+    callback start-monitor-clicked();
+    callback stop-monitor-clicked();
+    callback check-update-clicked();
+
+    private property <bool> is-authenticated: auth-status-kind == "online" || auth-status-kind == "waiting";
+
+    background: Theme.bg;
+
+    ScrollView {
+        VerticalLayout {
+            padding: Theme.spacing-lg;
+            spacing: Theme.spacing-lg;
+
+            GlassCard {
+                height: 188px;
+                border-color: root.monitor-running ? Theme.border-active : Theme.border-light;
+                background: root.monitor-running ? Theme.hero-bg : Theme.bg-surface;
+
+                animate background { duration: Theme.transition-smooth; }
+                animate border-color { duration: Theme.transition-fast; }
+
+                VerticalLayout {
+                    padding: Theme.spacing-lg;
+                    spacing: Theme.spacing-md;
+
+                    Text {
+                        text: root.is-authenticated ? (root.monitor-running ? "正在自动监控" : "已连接，准备开始监控") : "请先完成登录";
+                        font-size: Theme.font-xl;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                    }
+
+                    Text {
+                        text: root.is-authenticated ? (root.monitor-running ? "当前状态：" + root.monitor-status-text : "当前登录：" + root.auth-status-text) : "登录后可启动自动监控与自动化任务";
+                        font-size: Theme.font-sm;
+                        color: Theme.text-secondary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-sm;
+
+                        if !root.is-authenticated : PrimaryButton {
+                            text: "扫码登录";
+                            clicked => {
+                                root.login-clicked();
+                            }
+                        }
+
+                        if root.is-authenticated : PrimaryButton {
+                            text: root.monitor-running ? "停止监控" : "启动监控";
+                            clicked => {
+                                if root.monitor-running {
+                                    root.stop-monitor-clicked();
+                                } else {
+                                    root.start-monitor-clicked();
+                                }
+                            }
+                        }
+
+                        if root.is-authenticated : Button {
+                            text: "登出";
+                            clicked => {
+                                root.logout-clicked();
+                            }
+                        }
+
+                        Button {
+                            text: "检查更新";
+                            clicked => {
+                                root.check-update-clicked();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.last-error-text != "": GlassCard {
+                height: self.preferred-height;
+                border-color: Theme.error;
+                background: Theme.error-light;
+
+                HorizontalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-sm;
+
+                    Text {
+                        text: "⚠";
+                        font-size: Theme.font-md;
+                        color: Theme.error;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: root.last-error-text;
+                        font-size: Theme.font-sm;
+                        color: Theme.error;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            GlassCard {
+                vertical-stretch: 1;
+                min-height: 260px;
+
+                VerticalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-sm;
+
+                    HorizontalLayout {
+                        Text {
+                            text: "当前课程";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            letter-spacing: 0.5px;
+                            horizontal-stretch: 1;
+                        }
+
+                        if root.is-authenticated && !root.monitor-running : PrimaryButton {
+                            text: root.selected-lesson-index >= 0 ? "启动选中课程监控" : "启动监控";
+                            clicked => {
+                                root.start-monitor-clicked();
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 36px;
+                        border-radius: Theme.radius-sm;
+                        background: Theme.bg-card;
+
+                        HorizontalLayout {
+                            padding-left: Theme.spacing-md;
+                            padding-right: Theme.spacing-md;
+
+                            Text {
+                                text: "课程名";
+                                font-size: Theme.font-sm;
+                                font-weight: 600;
+                                color: Theme.text-secondary;
+                                horizontal-stretch: 2;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "教师";
+                                font-size: Theme.font-sm;
+                                font-weight: 600;
+                                color: Theme.text-secondary;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+
+                            Text {
+                                text: "状态";
+                                font-size: Theme.font-sm;
+                                font-weight: 600;
+                                color: Theme.text-secondary;
+                                horizontal-stretch: 1;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+
+                    if root.lessons.length == 0: Rectangle {
+                        height: 64px;
+                        Text {
+                            text: "暂无课程";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    for lesson[idx] in root.lessons: Rectangle {
+                        height: 42px;
+                        border-radius: Theme.radius-sm;
+                        border-width: root.selected-lesson-index == idx ? 1px : 0px;
+                        border-color: Theme.border-active;
+                        background: row-touch.has-hover ? Theme.bg-hover : root.selected-lesson-index == idx ? Theme.bg-card : Math.mod(idx, 2) == 0 ? transparent : Theme.bg-card;
+
+                        animate background { duration: Theme.transition-fast; }
+
+                        row-touch := TouchArea {
+                            clicked => {
+                                root.selected-lesson-index = idx;
+                            }
+
+                            HorizontalLayout {
+                                padding-left: Theme.spacing-md;
+                                padding-right: Theme.spacing-md;
+
+                                Text {
+                                    text: lesson.course-name;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-primary;
+                                    horizontal-stretch: 2;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: lesson.teacher-name;
+                                    font-size: Theme.font-sm;
+                                    color: Theme.text-secondary;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: lesson.status;
+                                    font-size: Theme.font-sm;
+                                    color: lesson.status == "上课中" ? Theme.success : Theme.text-muted;
+                                    horizontal-stretch: 1;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            GlassCard {
+                height: self.preferred-height;
+                HorizontalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-md;
+
+                    Text {
+                        text: "登录状态: " + root.auth-status-text;
+                        font-size: Theme.font-sm;
+                        color: Theme.text-secondary;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+        }
+    }
+}

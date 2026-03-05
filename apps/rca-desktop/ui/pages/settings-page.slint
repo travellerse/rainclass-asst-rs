@@ -1,0 +1,266 @@
+import { SpinBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { GlassCard } from "../components/glass-card.slint";
+import { ToggleSwitch } from "../components/toggle-switch.slint";
+import { PrimaryButton } from "../components/primary-button.slint";
+
+export component SettingsPage inherits Rectangle {
+    in-out property <int> setting-monitor-interval;
+    in-out property <bool> setting-auto-checkin;
+    in-out property <bool> setting-auto-answer;
+    in-out property <int> setting-answer-delay;
+    in-out property <bool> setting-notify-enabled;
+    in-out property <string> setting-webhook-url;
+    in-out property <bool> setting-check-update-on-startup;
+    in-out property <string> setting-active-tenant;
+
+    callback save-config-clicked();
+
+    background: Theme.bg;
+
+    ScrollView {
+        VerticalLayout {
+            padding: Theme.spacing-lg;
+            spacing: Theme.spacing-lg;
+
+            Text {
+                text: "设置";
+                font-size: Theme.font-xl;
+                font-weight: 700;
+                color: Theme.text-primary;
+            }
+
+            GlassCard {
+                height: self.preferred-height;
+
+                VerticalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-md;
+
+                    Text {
+                        text: "监控设置";
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        color: Theme.text-primary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "轮询间隔 (秒)";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        SpinBox {
+                            value <=> root.setting-monitor-interval;
+                            minimum: 1;
+                            maximum: 60;
+                            width: 160px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "选择雨课堂平台";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        ComboBox {
+                            model: ["Rain", "Hetang", "Yangtze", "YellowRiver"];
+                            current-value <=> root.setting-active-tenant;
+                            width: 160px;
+                        }
+                    }
+                }
+            }
+
+            GlassCard {
+                height: self.preferred-height;
+
+                VerticalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-md;
+
+                    Text {
+                        text: "自动化";
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        color: Theme.text-primary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "自动签到";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        ToggleSwitch {
+                            checked <=> root.setting-auto-checkin;
+                        }
+
+                        Text {
+                            text: root.setting-auto-checkin ? "已启用" : "已停用";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "自动答题";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        ToggleSwitch {
+                            checked <=> root.setting-auto-answer;
+                        }
+
+                        Text {
+                            text: root.setting-auto-answer ? "已启用" : "已停用";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "答题延迟 (ms)";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        SpinBox {
+                            value <=> root.setting-answer-delay;
+                            minimum: 0;
+                            maximum: 5000;
+                        }
+                    }
+                }
+            }
+
+            GlassCard {
+                height: self.preferred-height;
+
+                VerticalLayout {
+                    padding: Theme.spacing-md;
+                    spacing: Theme.spacing-md;
+
+                    Text {
+                        text: "通知与更新";
+                        font-size: Theme.font-md;
+                        font-weight: 600;
+                        color: Theme.text-primary;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "系统通知";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        ToggleSwitch {
+                            checked <=> root.setting-notify-enabled;
+                        }
+
+                        Text {
+                            text: root.setting-notify-enabled ? "已启用" : "已停用";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "Webhook推送URL";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        LineEdit {
+                            text <=> root.setting-webhook-url;
+                            placeholder-text: "如: https://sctapi.ftqq.com/xxx.send";
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "启动时检查更新";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        ToggleSwitch {
+                            checked <=> root.setting-check-update-on-startup;
+                        }
+
+                        Text {
+                            text: root.setting-check-update-on-startup ? "已启用" : "已停用";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: end;
+
+                PrimaryButton {
+                    text: "保存配置";
+                    clicked => {
+                        root.save-config-clicked();
+                    }
+                }
+            }
+        }
+    }
+}

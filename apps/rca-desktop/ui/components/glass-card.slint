@@ -1,0 +1,19 @@
+import { Theme } from "../theme.slint";
+
+export component GlassCard inherits Rectangle {
+    in property <bool> interactive: false;
+
+    background: Theme.bg-surface;
+    border-radius: Theme.radius-lg;
+    border-width: 1px;
+    border-color: touch.has-hover && interactive ? Theme.border-active : Theme.border-light;
+    drop-shadow-blur: Theme.shadow-blur-lg;
+    drop-shadow-color: rgba(0, 0, 0, 0.35);
+
+    animate border-color { duration: Theme.transition-fast; }
+    animate background { duration: Theme.transition-fast; }
+
+    touch := TouchArea {}
+
+    @children
+}
