@@ -18,8 +18,6 @@ Rust 重构版本的雨课堂助手，采用分层架构：
 
 `rca-cli` 与 `rca-desktop` 的 API 默认策略一致：
 
-- 所有构建默认 `真实 API`
-
 ## 快速开始
 
 1. 构建：
@@ -28,13 +26,13 @@ Rust 重构版本的雨课堂助手，采用分层架构：
     cargo build --workspace
     ```
 
-2. 运行桌面端（默认真实 API）：
+2. 运行桌面端：
 
     ```bash
     cargo run -p rca-desktop
     ```
 
-3. 运行桌面端（Release，默认真实 API）：
+3. 运行桌面端（Release）：
 
     ```bash
     cargo run -p rca-desktop --release
