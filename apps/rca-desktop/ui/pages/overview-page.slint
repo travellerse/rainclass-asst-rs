@@ -1,6 +1,4 @@
 import {
-    VerticalBox,
-    HorizontalBox,
     ScrollView,
     Button,
 } from "std-widgets.slint";
@@ -25,6 +23,7 @@ export component OverviewPage inherits Rectangle {
     callback check-update-clicked();
 
     private property <bool> is-authenticated: auth-status-kind == "online" || auth-status-kind == "waiting";
+    private property <bool> can-start-monitor: is-authenticated && !monitor-running && lessons.length > 0 && selected-lesson-index >= 0;
 
     background: Theme.bg;
 
@@ -61,15 +60,16 @@ export component OverviewPage inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.spacing-sm;
 
-                        if !root.is-authenticated : PrimaryButton {
+                        if !root.is-authenticated: PrimaryButton {
                             text: "扫码登录";
                             clicked => {
                                 root.login-clicked();
                             }
                         }
 
-                        if root.is-authenticated : PrimaryButton {
+                        if root.is-authenticated: PrimaryButton {
                             text: root.monitor-running ? "停止监控" : "启动监控";
+                            disabled: !root.monitor-running && !root.can-start-monitor;
                             clicked => {
                                 if root.monitor-running {
                                     root.stop-monitor-clicked();
@@ -79,7 +79,7 @@ export component OverviewPage inherits Rectangle {
                             }
                         }
 
-                        if root.is-authenticated : Button {
+                        if root.is-authenticated: Button {
                             text: "登出";
                             clicked => {
                                 root.logout-clicked();
@@ -139,8 +139,9 @@ export component OverviewPage inherits Rectangle {
                             horizontal-stretch: 1;
                         }
 
-                        if root.is-authenticated && !root.monitor-running : PrimaryButton {
+                        if root.is-authenticated && !root.monitor-running: PrimaryButton {
                             text: root.selected-lesson-index >= 0 ? "启动选中课程监控" : "启动监控";
+                            disabled: !root.can-start-monitor;
                             clicked => {
                                 root.start-monitor-clicked();
                             }

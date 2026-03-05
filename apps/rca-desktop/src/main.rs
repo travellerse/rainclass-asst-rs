@@ -176,6 +176,14 @@ fn sync_ui_state(ui: &AppWindow, app: &CoreAppService, runtime: &tokio::runtime:
                 .collect();
             ui.set_lessons(slint::ModelRc::new(slint::VecModel::from(lesson_model)));
 
+            let current_selected = ui.get_selected_lesson_index();
+            let lesson_count = state.current_lessons.len() as i32;
+            if lesson_count <= 0 {
+                ui.set_selected_lesson_index(-1);
+            } else if current_selected < 0 || current_selected >= lesson_count {
+                ui.set_selected_lesson_index(0);
+            }
+
             // Sync events
             let event_model: Vec<EventRow> = state
                 .recent_events

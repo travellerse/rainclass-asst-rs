@@ -14,9 +14,17 @@ Rust 重构版本的雨课堂助手，采用分层架构：
 - Phase 1（MVP）：登录、课程监控、自动签到、自动答题、更新检查
 - Phase 2（增强）：弹幕跟随、PPT 下载与题目提取、语音提醒、更多 UI 配置
 
-## 运行模式
+## Desktop UI 分层
 
-`rca-cli` 与 `rca-desktop` 的 API 默认策略一致：
+`rca-desktop` 的 Slint UI 采用组件化分层：
+
+- `apps/rca-desktop/ui/app-window.slint`：主窗口壳层（侧边栏导航 + 页面路由 + 回调透传）
+- `apps/rca-desktop/ui/pages/`：页面层（`overview-page.slint`、`events-page.slint`、`settings-page.slint`）
+- `apps/rca-desktop/ui/components/`：通用组件层（`glass-card.slint`、`toggle-switch.slint`、`primary-button.slint`、`nav-item.slint`）
+- `apps/rca-desktop/ui/models.slint`：UI 共享数据结构（课程与事件）
+- `apps/rca-desktop/ui/theme.slint`：主题 token（颜色、阴影、动效时长、间距、字号）
+
+该分层遵循“页面负责布局，组件负责视觉与交互细节，主窗口只做编排”的原则，方便后续继续扩展视觉风格与业务状态。
 
 ## 快速开始
 

@@ -18,7 +18,10 @@ export component NavItem inherits Rectangle {
         border-radius: 1.5px;
         background: Theme.primary;
 
-        animate height { duration: Theme.transition-fast; easing: ease; }
+        animate height {
+            duration: Theme.transition-fast;
+            easing: ease;
+        }
     }
 
     touch := TouchArea {

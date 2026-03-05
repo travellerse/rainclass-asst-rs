@@ -84,21 +84,27 @@ export component AppWindow inherits Window {
                     icon: "📊";
                     label: "总览";
                     active: root.current-page == 0;
-                    activated => { root.current-page = 0; }
+                    activated => {
+                        root.current-page = 0;
+                    }
                 }
 
                 NavItem {
                     icon: "📋";
                     label: "事件日志";
                     active: root.current-page == 1;
-                    activated => { root.current-page = 1; }
+                    activated => {
+                        root.current-page = 1;
+                    }
                 }
 
                 NavItem {
                     icon: "⚙️";
                     label: "设置";
                     active: root.current-page == 2;
-                    activated => { root.current-page = 2; }
+                    activated => {
+                        root.current-page = 2;
+                    }
                 }
 
                 Rectangle {
@@ -149,11 +155,21 @@ export component AppWindow inherits Window {
                 lessons: root.lessons;
                 selected-lesson-index <=> root.selected-lesson-index;
 
-                login-clicked => { root.login-clicked(); }
-                logout-clicked => { root.logout-clicked(); }
-                start-monitor-clicked => { root.start-monitor-clicked(); }
-                stop-monitor-clicked => { root.stop-monitor-clicked(); }
-                check-update-clicked => { root.check-update-clicked(); }
+                login-clicked => {
+                    root.login-clicked();
+                }
+                logout-clicked => {
+                    root.logout-clicked();
+                }
+                start-monitor-clicked => {
+                    root.start-monitor-clicked();
+                }
+                stop-monitor-clicked => {
+                    root.stop-monitor-clicked();
+                }
+                check-update-clicked => {
+                    root.check-update-clicked();
+                }
             }
 
             if root.current-page == 1: EventsPage {
@@ -170,7 +186,9 @@ export component AppWindow inherits Window {
                 setting-check-update-on-startup <=> root.setting-check-update-on-startup;
                 setting-active-tenant <=> root.setting-active-tenant;
 
-                save-config-clicked => { root.save-config-clicked(); }
+                save-config-clicked => {
+                    root.save-config-clicked();
+                }
             }
         }
     }

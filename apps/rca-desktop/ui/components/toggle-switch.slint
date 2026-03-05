@@ -24,7 +24,10 @@ export component ToggleSwitch inherits Rectangle {
         drop-shadow-blur: Theme.shadow-blur-sm;
         drop-shadow-color: rgba(0, 0, 0, 0.25);
 
-        animate x { duration: Theme.transition-fast; easing: ease-in-out; }
+        animate x {
+            duration: Theme.transition-fast;
+            easing: ease-in-out;
+        }
     }
 
     touch := TouchArea {
