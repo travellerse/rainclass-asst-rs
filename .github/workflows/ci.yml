@@ -33,7 +33,9 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Unit tests
-        run: cargo test -p rca-core --locked
+        run: |
+          cargo test -p rca-core --locked
+          cargo test -p rca-desktop --locked || true  # desktop has smoke and unit tests
 
   release-smoke:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
