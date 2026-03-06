@@ -18,8 +18,8 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use rca_core::app::ports::{ApiPort, ApiPortError, LessonWsEvent};
 use rca_core::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
 use rca_core::domain::{
-    AnswerPayload, CheckinId, CourseId, Lesson, LessonId, LessonStatus, Problem, ProblemId,
-    ProblemOption, ProblemType,
+    AnswerPayload, BlankAnswer, CheckinId, CourseId, Lesson, LessonId, LessonStatus, Problem,
+    ProblemId, ProblemOption, ProblemType,
 };
 
 use crate::api::{ApiError, AuthContext, RainClassroomWs, WsEventDto, WsEventStream};
@@ -180,6 +180,10 @@ impl YktApiPort {
             .and_then(Value::as_str)
             .unwrap_or("WS 题目")
             .to_string();
+        let limit = problem_value
+            .get("limit")
+            .and_then(Value::as_i64)
+            .and_then(|v| if v == -1 { None } else { Some(v) });
 
         Some(WsEventDto::ProblemPublished(crate::api::ProblemDto {
             lesson_id,
@@ -187,6 +191,9 @@ impl YktApiPort {
             problem_type,
             title,
             options: Vec::new(),
+            correct_answers: Vec::new(),
+            blanks: Vec::new(),
+            limit_secs: limit,
             published_at: Utc::now(),
             deadline_at: None,
         }))
@@ -482,6 +489,56 @@ fn parse_problem_options(problem: &Value) -> Vec<ProblemOption> {
     options
 }
 
+/// Extract correct answer IDs/values from the problem JSON.
+/// Maps to Python's `problem["answers"]`.
+fn parse_correct_answers(problem: &Value) -> Vec<String> {
+    let mut answers = Vec::new();
+    if let Some(Value::Array(items)) = problem.get("answers") {
+        for item in items {
+            match item {
+                Value::String(s) => answers.push(s.clone()),
+                Value::Number(n) => answers.push(n.to_string()),
+                Value::Bool(b) => answers.push(b.to_string()),
+                _ => {}
+            }
+        }
+    }
+    answers
+}
+
+/// Extract fill-blank answer slots from the problem JSON.
+/// Maps to Python's `problem["blanks"]`, where each blank has `["answers"]`.
+fn parse_blanks(problem: &Value) -> Vec<BlankAnswer> {
+    let mut blanks = Vec::new();
+    if let Some(Value::Array(items)) = problem.get("blanks") {
+        for item in items {
+            let mut accepted = Vec::new();
+            if let Some(Value::Array(answers)) = item.get("answers") {
+                for answer in answers {
+                    match answer {
+                        Value::String(s) => accepted.push(s.clone()),
+                        Value::Number(n) => accepted.push(n.to_string()),
+                        _ => {}
+                    }
+                }
+            }
+            blanks.push(BlankAnswer {
+                accepted_values: accepted,
+            });
+        }
+    }
+    blanks
+}
+
+/// Extract the time limit in seconds from the problem JSON.
+/// Returns None for unlimited (-1) problems.
+fn parse_limit(problem: &Value) -> Option<i64> {
+    problem
+        .get("limit")
+        .and_then(Value::as_i64)
+        .and_then(|v| if v == -1 { None } else { Some(v) })
+}
+
 #[async_trait]
 impl ApiPort for YktApiPort {
     async fn get_on_lessons(&self, session: &AuthSession) -> Result<Vec<Lesson>, ApiPortError> {
@@ -639,6 +696,12 @@ impl ApiPort for YktApiPort {
                         .unwrap_or(&Value::Null),
                 );
                 let options = parse_problem_options(problem);
+
+                // Extract correct answers from slide problem data
+                let correct_answers = parse_correct_answers(problem);
+                let blanks = parse_blanks(problem);
+                let limit_secs = parse_limit(problem);
+
                 let problem_id = ProblemId(
                     Self::to_non_zero(raw_problem_id, "problemId")
                         .map_err(ApiPortError::protocol)?,
@@ -650,6 +713,9 @@ impl ApiPort for YktApiPort {
                     problem_type,
                     title,
                     options,
+                    correct_answers,
+                    blanks,
+                    limit_secs,
                     published_at: Utc::now(),
                     deadline_at: None,
                 });
@@ -726,6 +792,38 @@ impl ApiPort for YktApiPort {
             .json()
             .await
             .map_err(|err| ApiPortError::request("submit checkin decode", err))?;
+
+        let _ = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
+        Ok(())
+    }
+
+    async fn send_danmu(
+        &self,
+        session: &AuthSession,
+        lesson_id: LessonId,
+        content: &str,
+    ) -> Result<(), ApiPortError> {
+        let headers = self
+            .session_headers(session)
+            .map_err(ApiPortError::protocol)?;
+        let body = json!({
+            "lessonId": lesson_id.0.get(),
+            "coursewormId": lesson_id.0.get(), // Rain Classroom requires this field conceptually identical to lessonId
+            "message": content,
+        });
+
+        let url = format!("https://{}/api/v3/lesson/danmu/send", self.host);
+        let value: Value = self
+            .client
+            .post(url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|err| ApiPortError::request("send danmu", err))?
+            .json()
+            .await
+            .map_err(|err| ApiPortError::request("send danmu decode", err))?;
 
         let _ = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         Ok(())
@@ -1093,6 +1191,11 @@ impl ApiPort for YktApiPort {
                             .into_iter()
                             .map(|(option_id, text)| ProblemOption { option_id, text })
                             .collect::<Vec<_>>();
+                        let blanks = problem
+                            .blanks
+                            .into_iter()
+                            .map(|accepted_values| BlankAnswer { accepted_values })
+                            .collect();
                         LessonWsEvent::ProblemPublished {
                             problem: Problem {
                                 lesson_id: lesson_id_copy,
@@ -1100,6 +1203,9 @@ impl ApiPort for YktApiPort {
                                 problem_type,
                                 title: problem.title,
                                 options,
+                                correct_answers: problem.correct_answers,
+                                blanks,
+                                limit_secs: problem.limit_secs,
                                 published_at: problem.published_at,
                                 deadline_at: problem.deadline_at,
                             },

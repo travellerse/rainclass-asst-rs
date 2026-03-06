@@ -17,6 +17,9 @@ pub struct ProblemDto {
     pub problem_type: String,
     pub title: String,
     pub options: Vec<(String, String)>,
+    pub correct_answers: Vec<String>,
+    pub blanks: Vec<Vec<String>>,
+    pub limit_secs: Option<i64>,
     pub published_at: DateTime<Utc>,
     pub deadline_at: Option<DateTime<Utc>>,
 }

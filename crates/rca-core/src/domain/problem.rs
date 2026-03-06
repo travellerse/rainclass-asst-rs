@@ -16,6 +16,13 @@ pub struct ProblemOption {
     pub text: String,
 }
 
+/// Represents one blank in a fill-blank problem.
+/// Each blank may accept multiple correct values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlankAnswer {
+    pub accepted_values: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
     pub lesson_id: LessonId,
@@ -23,6 +30,12 @@ pub struct Problem {
     pub problem_type: ProblemType,
     pub title: String,
     pub options: Vec<ProblemOption>,
+    /// Correct answer IDs/values extracted from presentation slides.
+    pub correct_answers: Vec<String>,
+    /// Fill-blank answer slots (each with multiple accepted values).
+    pub blanks: Vec<BlankAnswer>,
+    /// Time limit in seconds (-1 means unlimited, mapped to None).
+    pub limit_secs: Option<i64>,
     pub published_at: DateTime<Utc>,
     pub deadline_at: Option<DateTime<Utc>>,
 }
