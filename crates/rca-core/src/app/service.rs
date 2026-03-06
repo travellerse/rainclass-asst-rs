@@ -53,6 +53,7 @@ impl CoreAppService {
             subscribers: Vec::new(),
         }));
 
+        let notifier = deps.notifier.clone();
         let inner_clone = inner.clone();
         tokio::spawn(async move {
             while let Ok(event) = rx.recv().await {
@@ -61,6 +62,52 @@ impl CoreAppService {
                     Self::append_recent_event(&mut guard, event.clone());
                     if let CoreEvent::MonitorStopped { .. } = event {
                         guard.app_state.monitor_running = false;
+                    }
+
+                    if guard.config.notify_enabled {
+                        let maybe_notify = match &event {
+                            CoreEvent::AutoAnswerSubmitted {
+                                lesson_id,
+                                problem_id,
+                            } => Some(AppNotification {
+                                title: "自动答题".to_string(),
+                                body: format!(
+                                    "已成功提交自动答题！(课程 {}, 题目 {})",
+                                    lesson_id.0.get(),
+                                    problem_id.0.get()
+                                ),
+                            }),
+                            CoreEvent::AutoCheckinSubmitted {
+                                lesson_id,
+                                checkin_id,
+                            } => Some(AppNotification {
+                                title: "自动签到".to_string(),
+                                body: format!(
+                                    "已成功自动签到！(课程 {}, 签到 {})",
+                                    lesson_id.0.get(),
+                                    checkin_id.0.get()
+                                ),
+                            }),
+                            CoreEvent::CallPaused {
+                                lesson_id,
+                                target_name,
+                            } => Some(AppNotification {
+                                title: "老师正在点名".to_string(),
+                                body: format!(
+                                    "老师正在点名：{}！(课程 {})",
+                                    target_name,
+                                    lesson_id.0.get()
+                                ),
+                            }),
+                            _ => None,
+                        };
+
+                        if let Some(msg) = maybe_notify {
+                            let notifier_clone = notifier.clone();
+                            tokio::spawn(async move {
+                                let _ = notifier_clone.notify(msg).await;
+                            });
+                        }
                     }
                 }
                 Self::emit_state_changed_with_inner(&inner_clone).await;
@@ -192,6 +239,12 @@ impl CoreAppService {
             max_parallel_lessons: 10,
             auto_answer_enabled: config.auto_answer_enabled,
             auto_checkin_enabled: config.auto_checkin_enabled,
+            auto_danmu_enabled: config.auto_danmu_enabled,
+            danmu_threshold: config.danmu_threshold,
+            delay_strategy: crate::monitor::DelayStrategy::from_type_code(
+                config.answer_delay_type,
+                config.answer_delay_custom_percent,
+            ),
         };
 
         if let Err(e) = self.deps.monitor_engine.start(session, monitor_cfg).await {
@@ -516,6 +569,15 @@ mod tests {
             Ok(())
         }
 
+        async fn send_danmu(
+            &self,
+            _session: &AuthSession,
+            _lesson_id: LessonId,
+            _content: &str,
+        ) -> Result<(), ApiPortError> {
+            Ok(())
+        }
+
         async fn start_qr_login(&self) -> Result<QrLoginBootstrap, ApiPortError> {
             Ok(QrLoginBootstrap {
                 scene_id: "scene-1".to_string(),
@@ -720,7 +782,11 @@ mod tests {
             monitor_interval_secs: 9,
             auto_checkin_enabled: false,
             auto_answer_enabled: true,
+            auto_danmu_enabled: true,
+            danmu_threshold: 4,
             answer_delay_ms: 1200,
+            answer_delay_type: 2,
+            answer_delay_custom_percent: 30,
             notify_enabled: false,
             webhook_url: "http://example.com/webhook".to_string(),
             check_update_on_startup: false,
@@ -967,6 +1033,9 @@ mod tests {
                     option_id: "A".to_string(),
                     text: "选项A".to_string(),
                 }],
+                correct_answers: vec!["A".to_string()],
+                blanks: Vec::new(),
+                limit_secs: Some(10), // Bypass delay logic
                 published_at: Utc::now(),
                 deadline_at: None,
             });

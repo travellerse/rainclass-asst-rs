@@ -51,8 +51,10 @@ impl AppController {
             })
             .unwrap_or(rca_infra::api::TenantHost::Hetang);
 
-        let mut notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> =
-            vec![Box::new(rca_infra::notify::LoggingNotifier)];
+        let mut notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> = vec![
+            Box::new(rca_infra::notify::LoggingNotifier),
+            Box::new(rca_infra::notify::DesktopNotifier::new()),
+        ];
 
         if let Some(cfg) = initial_config.as_ref()
             && !cfg.webhook_url.is_empty()
