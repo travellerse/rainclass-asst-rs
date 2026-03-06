@@ -8,6 +8,7 @@ export component SettingsPage inherits Rectangle {
     in-out property <int> setting-monitor-interval;
     in-out property <bool> setting-auto-checkin;
     in-out property <bool> setting-auto-answer;
+    in-out property <bool> setting-auto-answer-random-guess;
     in-out property <int> setting-answer-delay;
     in-out property <bool> setting-notify-enabled;
     in-out property <string> setting-webhook-url;
@@ -141,6 +142,30 @@ export component SettingsPage inherits Rectangle {
 
                         Text {
                             text: root.setting-auto-answer ? "已启用" : "已停用";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.spacing-md;
+                        alignment: start;
+
+                        Text {
+                            text: "随机盲猜答案";
+                            font-size: Theme.font-sm;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center;
+                            min-width: 160px;
+                        }
+
+                        ToggleSwitch {
+                            checked <=> root.setting-auto-answer-random-guess;
+                        }
+
+                        Text {
+                            text: root.setting-auto-answer-random-guess ? "已启用" : "已停用 (未解出答案时放弃提交)";
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             vertical-alignment: center;

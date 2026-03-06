@@ -185,6 +185,7 @@ pub fn sync_config_to_ui(ui: &crate::AppWindow, controller: &crate::app_controll
         ui.set_setting_monitor_interval(config.monitor_interval_secs as i32);
         ui.set_setting_auto_checkin(config.auto_checkin_enabled);
         ui.set_setting_auto_answer(config.auto_answer_enabled);
+        ui.set_setting_auto_answer_random_guess(config.auto_answer_random_guess);
         ui.set_setting_answer_delay(config.answer_delay_ms as i32);
         ui.set_setting_notify_enabled(config.notify_enabled);
         ui.set_setting_webhook_url(config.webhook_url.into());

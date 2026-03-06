@@ -155,6 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 monitor_interval_secs: ui.get_setting_monitor_interval().max(1) as u64,
                 auto_checkin_enabled: ui.get_setting_auto_checkin(),
                 auto_answer_enabled: ui.get_setting_auto_answer(),
+                auto_answer_random_guess: ui.get_setting_auto_answer_random_guess(),
                 auto_danmu_enabled: true,
                 danmu_threshold: 4,
                 answer_delay_ms: ui.get_setting_answer_delay().max(0) as u64,

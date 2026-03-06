@@ -27,6 +27,7 @@ export component AppWindow inherits Window {
     in-out property <int> setting-monitor-interval: 5;
     in-out property <bool> setting-auto-checkin: true;
     in-out property <bool> setting-auto-answer: true;
+    in-out property <bool> setting-auto-answer-random-guess: false;
     in-out property <int> setting-answer-delay: 500;
     in-out property <bool> setting-notify-enabled: true;
     in-out property <string> setting-webhook-url: "";
@@ -180,6 +181,7 @@ export component AppWindow inherits Window {
                 setting-monitor-interval <=> root.setting-monitor-interval;
                 setting-auto-checkin <=> root.setting-auto-checkin;
                 setting-auto-answer <=> root.setting-auto-answer;
+                setting-auto-answer-random-guess <=> root.setting-auto-answer-random-guess;
                 setting-answer-delay <=> root.setting-answer-delay;
                 setting-notify-enabled <=> root.setting-notify-enabled;
                 setting-webhook-url <=> root.setting-webhook-url;
