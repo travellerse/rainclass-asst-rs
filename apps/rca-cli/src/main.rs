@@ -10,14 +10,14 @@ use rca_core::app::{
     CoreAppService,
 };
 use rca_core::auth::AuthState;
-use rca_infra::api::{TenantHost, YktApiPort, YktApiPortConfig};
-use rca_infra::bridge::{
+use rca_infra::api::{YktApiPort, YktApiPortConfig};use rca_infra::bridge::{
     CoreConfigStoreAdapter, CoreNotifierAdapter, CoreSessionStoreAdapter, CoreUpdateCheckerAdapter,
 };
 use rca_infra::notify::LoggingNotifier;
 
 use rca_infra::storage::{
-    AppPaths, JsonFileConfigRepository, JsonFileSessionRepository, KeyringCredentialStore,
+    AppPaths, ConfigRepository, JsonFileConfigRepository, JsonFileSessionRepository,
+    KeyringCredentialStore,
 };
 use rca_infra::update::GithubReleaseChecker;
 use tokio::time::{Duration, Instant, sleep};
@@ -56,6 +56,17 @@ enum Command {
         duration_secs: Option<u64>,
     },
     Logout,
+    /// View or update application configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConfigCommand {
+    Get,
+    SetTenant { tenant: String },
 }
 
 fn default_config() -> AppConfigDto {
@@ -155,7 +166,7 @@ fn print_login_qr(payload: &str) {
     }
 }
 
-fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
+async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
     let paths = AppPaths::detect()?;
     let config_repo = Arc::new(JsonFileConfigRepository::new(paths.config_file));
     let session_repo = Arc::new(JsonFileSessionRepository::new(paths.session_file));
@@ -166,9 +177,22 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
         "RainClassroomAssistant",
     )?);
 
+    let initial_config = config_repo.load().await.ok();
+    let initial_tenant = initial_config
+        .as_ref()
+        .map(|cfg| match cfg.active_tenant {
+            rca_infra::storage::TenantKind::Rain => rca_infra::api::TenantHost::Rain,
+            rca_infra::storage::TenantKind::Hetang => rca_infra::api::TenantHost::Hetang,
+            rca_infra::storage::TenantKind::Yangtze => rca_infra::api::TenantHost::Yangtze,
+            rca_infra::storage::TenantKind::YellowRiver => {
+                rca_infra::api::TenantHost::YellowRiver
+            }
+        })
+        .unwrap_or(rca_infra::api::TenantHost::Hetang);
+
     let api_port: Arc<dyn rca_core::app::ports::ApiPort> =
         Arc::new(YktApiPort::new(YktApiPortConfig {
-            tenant: TenantHost::Hetang,
+            tenant: initial_tenant,
             timeout_secs: 15,
         })?);
 
@@ -200,7 +224,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .init();
 
-    let app = bootstrap_app()?;
+    let app = bootstrap_app().await?;
 
     app.handle_command(AppCommand::LoadConfig).await?;
     app.handle_command(AppCommand::RestoreSession).await?;
@@ -357,6 +381,37 @@ async fn main() -> Result<(), Box<dyn Error>> {
             app.handle_command(AppCommand::Logout).await?;
             info!("已登出并清除本地会话");
         }
+        Command::Config { command } => match command {
+            ConfigCommand::Get => {
+                let state = app.handle_query(AppQuery::GetConfig).await?;
+                if let AppQueryResult::Config(config) = state {
+                    println!("当前配置: {config:#?}");
+                }
+            }
+            ConfigCommand::SetTenant { tenant } => {
+                let valid_tenants = ["rain", "hetang", "yangtze", "yellow-river", "Rain", "Hetang", "Yangtze", "YellowRiver"];
+                if !valid_tenants.contains(&tenant.as_str()) {
+                    return Err(format!("不支持的服务器: {tenant}。支持的值: {valid_tenants:?}").into());
+                }
+
+                // Title case the tenant for uniform config behavior across UI/CLI.
+                let tenant = match tenant.to_lowercase().as_str() {
+                    "rain" => "Rain".to_string(),
+                    "hetang" => "Hetang".to_string(),
+                    "yangtze" => "Yangtze".to_string(),
+                    "yellow-river" => "YellowRiver".to_string(),
+                    _ => unreachable!(),
+                };
+
+                let state = app.handle_query(AppQuery::GetConfig).await?;
+                if let AppQueryResult::Config(mut config) = state {
+                    config.tenant = tenant.clone();
+                    app.handle_command(AppCommand::SaveConfig { config }).await?;
+                    println!("成功将服务器切换为 {}", tenant);
+                    println!("请注意：您需要重启程序，且可能需要使用 `rca-cli logout` 重新登录才能完全生效。");
+                }
+            }
+        },
     }
 
     Ok(())
