@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::auth::AuthSession;
 use crate::domain::{CheckinId, Lesson, LessonId, Problem, ProblemId};
-use crate::monitor::delay::DelayStrategy;
 use crate::monitor::MonitorError;
+use crate::monitor::delay::DelayStrategy;
 
 #[derive(Debug, Clone)]
 pub struct MonitorConfig {

@@ -10,7 +10,8 @@ use rca_core::app::{
     CoreAppService,
 };
 use rca_core::auth::AuthState;
-use rca_infra::api::{YktApiPort, YktApiPortConfig};use rca_infra::bridge::{
+use rca_infra::api::{YktApiPort, YktApiPortConfig};
+use rca_infra::bridge::{
     CoreConfigStoreAdapter, CoreNotifierAdapter, CoreSessionStoreAdapter, CoreUpdateCheckerAdapter,
 };
 use rca_infra::notify::LoggingNotifier;
@@ -184,9 +185,7 @@ async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
             rca_infra::storage::TenantKind::Rain => rca_infra::api::TenantHost::Rain,
             rca_infra::storage::TenantKind::Hetang => rca_infra::api::TenantHost::Hetang,
             rca_infra::storage::TenantKind::Yangtze => rca_infra::api::TenantHost::Yangtze,
-            rca_infra::storage::TenantKind::YellowRiver => {
-                rca_infra::api::TenantHost::YellowRiver
-            }
+            rca_infra::storage::TenantKind::YellowRiver => rca_infra::api::TenantHost::YellowRiver,
         })
         .unwrap_or(rca_infra::api::TenantHost::Hetang);
 
@@ -389,14 +388,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             ConfigCommand::SetTenant { tenant } => {
-                let valid_tenants = ["rain", "hetang", "yangtze", "yellow-river", "Rain", "Hetang", "Yangtze", "YellowRiver"];
+                let valid_tenants = [
+                    "rain",
+                    "hetang",
+                    "yangtze",
+                    "yellow-river",
+                    "Rain",
+                    "Hetang",
+                    "Yangtze",
+                    "YellowRiver",
+                ];
                 if !valid_tenants.contains(&tenant.as_str()) {
-                    return Err(format!("不支持的服务器: {tenant}。支持的值: {valid_tenants:?}").into());
+                    return Err(
+                        format!("不支持的服务器: {tenant}。支持的值: {valid_tenants:?}").into(),
+                    );
                 }
 
                 // Title case the tenant for uniform config behavior across UI/CLI.
                 let tenant = match tenant.to_lowercase().as_str() {
-                    "rain" => "Rain".to_string(),
+                    "rain" => "雨课堂".to_string(),
                     "hetang" => "Hetang".to_string(),
                     "yangtze" => "Yangtze".to_string(),
                     "yellow-river" => "YellowRiver".to_string(),
@@ -406,9 +416,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 let state = app.handle_query(AppQuery::GetConfig).await?;
                 if let AppQueryResult::Config(mut config) = state {
                     config.tenant = tenant.clone();
-                    app.handle_command(AppCommand::SaveConfig { config }).await?;
+                    app.handle_command(AppCommand::SaveConfig { config })
+                        .await?;
                     println!("成功将服务器切换为 {}", tenant);
-                    println!("请注意：您需要重启程序，且可能需要使用 `rca-cli logout` 重新登录才能完全生效。");
+                    println!(
+                        "请注意：您需要重启程序，且可能需要使用 `rca-cli logout` 重新登录才能完全生效。"
+                    );
                 }
             }
         },

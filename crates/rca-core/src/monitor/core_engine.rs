@@ -28,6 +28,12 @@ struct EngineRuntime {
     join_handle: JoinHandle<()>,
 }
 
+struct LessonState {
+    answered_problems: HashSet<u64>,
+    checked_checkins: HashSet<u64>,
+    danmu_tracker: crate::monitor::DanmuTracker,
+}
+
 impl CoreMonitorEngine {
     pub fn new(api: Arc<dyn ApiPort>) -> Self {
         let (event_tx, _) = tokio::sync::broadcast::channel(128);
@@ -43,7 +49,10 @@ impl CoreMonitorEngine {
     /// Resolve the best answer payload using extracted correct answers.
     /// If `allow_random_guess` is true, falls back to heuristic (first option) when no correct answers are available.
     /// Otherwise, returns None.
-    fn resolve_answer_payload(problem: &Problem, allow_random_guess: bool) -> Option<AnswerPayload> {
+    fn resolve_answer_payload(
+        problem: &Problem,
+        allow_random_guess: bool,
+    ) -> Option<AnswerPayload> {
         match problem.problem_type {
             ProblemType::SingleChoice => {
                 // Prefer correct answer from slide data
@@ -101,9 +110,7 @@ impl CoreMonitorEngine {
         api: &Arc<dyn ApiPort>,
         session: &AuthSession,
         lesson: &crate::domain::Lesson,
-        answered_problems: &mut HashSet<u64>,
-        checked_checkins: &mut HashSet<u64>,
-        danmu_tracker: &mut crate::monitor::DanmuTracker,
+        state: &mut LessonState,
         event: (LessonWsEvent, &tokio::sync::broadcast::Sender<CoreEvent>),
         cfg: &MonitorConfig,
     ) {
@@ -118,8 +125,9 @@ impl CoreMonitorEngine {
                 });
 
                 if auto_answer_enabled
-                    && answered_problems.insert(problem.problem_id.0.get())
-                    && let Some(payload) = Self::resolve_answer_payload(&problem, cfg.auto_answer_random_guess)
+                    && state.answered_problems.insert(problem.problem_id.0.get())
+                    && let Some(payload) =
+                        Self::resolve_answer_payload(&problem, cfg.auto_answer_random_guess)
                 {
                     let delay = crate::monitor::calculate_wait_time(
                         problem.limit_secs,
@@ -174,7 +182,7 @@ impl CoreMonitorEngine {
                     checkin_id,
                 });
 
-                if auto_checkin_enabled && checked_checkins.insert(checkin_id.0.get()) {
+                if auto_checkin_enabled && state.checked_checkins.insert(checkin_id.0.get()) {
                     match api
                         .submit_checkin(session, lesson.lesson_id, checkin_id)
                         .await
@@ -225,7 +233,9 @@ impl CoreMonitorEngine {
                 );
 
                 if cfg.auto_danmu_enabled
-                    && danmu_tracker.track_and_decide(&content, cfg.danmu_threshold, 60, 60)
+                    && state
+                        .danmu_tracker
+                        .track_and_decide(&content, cfg.danmu_threshold, 60, 60)
                 {
                     tracing::info!("Auto-replying to danmu: {:?}", content);
                     let content_clone = content.clone();
@@ -326,9 +336,11 @@ impl MonitorEngine for CoreMonitorEngine {
                 let cfg_for_lesson = cfg.clone();
 
                 join_set.spawn(async move {
-                    let mut answered_problems = HashSet::new();
-                    let mut checked_checkins = HashSet::new();
-                    let mut danmu_tracker = crate::monitor::DanmuTracker::new();
+                    let mut state = LessonState {
+                        answered_problems: HashSet::new(),
+                        checked_checkins: HashSet::new(),
+                        danmu_tracker: crate::monitor::DanmuTracker::new(),
+                    };
 
                     loop {
                         if *stop_rx_lesson.borrow() {
@@ -362,9 +374,7 @@ impl MonitorEngine for CoreMonitorEngine {
                                     &api_for_lesson,
                                     &session_for_lesson,
                                     &lesson_clone,
-                                     &mut answered_problems,
-                                    &mut checked_checkins,
-                                    &mut danmu_tracker,
+                                    &mut state,
                                     (crate::app::ports::LessonWsEvent::ProblemPublished { problem }, &event_tx_lesson),
                                     &cfg_for_lesson,
                                 ).await;
@@ -390,9 +400,7 @@ impl MonitorEngine for CoreMonitorEngine {
                                         &api_for_lesson,
                                         &session_for_lesson,
                                         &lesson_clone,
-                                        &mut answered_problems,
-                                        &mut checked_checkins,
-                                        &mut danmu_tracker,
+                                        &mut state,
                                         (event, &event_tx_lesson),
                                         &cfg_for_lesson,
                                     ).await;

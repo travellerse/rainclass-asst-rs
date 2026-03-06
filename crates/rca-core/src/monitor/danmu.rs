@@ -50,14 +50,14 @@ impl DanmuTracker {
         let cooldown = Duration::from_secs(cooldown_secs);
 
         // Check if we are still in cooldown for this specific content
-        if let Some(last) = self.last_sent.get(&content) {
-            if now.duration_since(*last) < cooldown {
-                return false;
-            }
+        if let Some(last) = self.last_sent.get(&content)
+            && now.duration_since(*last) < cooldown
+        {
+            return false;
         }
 
         // Update history for this content
-        let queue = self.history.entry(content.clone()).or_insert_with(VecDeque::new);
+        let queue = self.history.entry(content.clone()).or_default();
         queue.push_back(now);
 
         // Clean up old entries outside the time window
@@ -100,7 +100,8 @@ impl DanmuTracker {
         });
 
         // Remove old cooldowns
-        self.last_sent.retain(|_, &mut last| now.duration_since(last) < cooldown);
+        self.last_sent
+            .retain(|_, &mut last| now.duration_since(last) < cooldown);
     }
 }
 
@@ -119,7 +120,7 @@ mod tests {
         let mut tracker = DanmuTracker::new();
         assert!(!tracker.track_and_decide("1", 3, 60, 60)); // 1st
         assert!(!tracker.track_and_decide("1", 3, 60, 60)); // 2nd
-        assert!(tracker.track_and_decide("1", 3, 60, 60));  // 3rd -> trigger!
+        assert!(tracker.track_and_decide("1", 3, 60, 60)); // 3rd -> trigger!
     }
 
     #[test]

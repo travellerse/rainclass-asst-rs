@@ -10,9 +10,10 @@ use std::time::Duration;
 use rand::Rng;
 
 /// Strategy for how long to wait before submitting an auto-answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DelayStrategy {
     /// Moderate: target ~65% of the time limit.
+    #[default]
     Moderate,
     /// Aggressive: target ~35% of the time limit.
     Aggressive,
@@ -20,12 +21,6 @@ pub enum DelayStrategy {
     Conservative,
     /// Custom: user-specified target percentage (0-100).
     Custom { percent: u32 },
-}
-
-impl Default for DelayStrategy {
-    fn default() -> Self {
-        Self::Moderate
-    }
 }
 
 impl DelayStrategy {
@@ -186,7 +181,7 @@ mod tests {
     fn none_limit_uses_default_60s() {
         let d = calculate_wait_time(None, &DelayStrategy::Moderate);
         let secs = d.as_secs_f64();
-        assert!(secs >= 1.0 && secs <= 55.0);
+        assert!((1.0..=55.0).contains(&secs));
     }
 
     #[test]
@@ -194,7 +189,7 @@ mod tests {
         let strategy = DelayStrategy::Custom { percent: 50 };
         let d = calculate_wait_time(Some(60), &strategy);
         let secs = d.as_secs_f64();
-        assert!(secs >= 1.0 && secs <= 55.0);
+        assert!((1.0..=55.0).contains(&secs));
     }
 
     #[test]

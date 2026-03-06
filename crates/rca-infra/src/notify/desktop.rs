@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use crate::notify::{Notification, Notifier, NotifyError};
+use async_trait::async_trait;
 
 pub struct DesktopNotifier;
 
