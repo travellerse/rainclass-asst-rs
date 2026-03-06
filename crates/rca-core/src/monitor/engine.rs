@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use crate::auth::AuthSession;
 use crate::domain::{CheckinId, Lesson, LessonId, Problem, ProblemId};
+use crate::monitor::delay::DelayStrategy;
 use crate::monitor::MonitorError;
 
 #[derive(Debug, Clone)]
@@ -14,6 +15,9 @@ pub struct MonitorConfig {
     pub max_parallel_lessons: usize,
     pub auto_answer_enabled: bool,
     pub auto_checkin_enabled: bool,
+    pub auto_danmu_enabled: bool,
+    pub danmu_threshold: usize,
+    pub delay_strategy: DelayStrategy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
