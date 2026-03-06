@@ -10,7 +10,7 @@ use std::process::Command;
 fn smoke_runs() {
     // build the executable and run it with `--help` to make sure it doesn't crash
     let output = Command::new("cargo")
-        .args(&["run", "-p", "rca-desktop", "--", "--help"])
+        .args(["run", "-p", "rca-desktop", "--", "--help"])
         .output()
         .expect("failed to spawn rca-desktop");
     assert!(output.status.success());

@@ -3,17 +3,13 @@ use std::sync::Arc;
 use slint::Weak;
 
 use crate::app_controller::AppController;
-use crate::ui_helpers::{auth_status_text, auth_status_kind};
-use rca_core::auth::AuthState;
+use crate::ui_helpers::{auth_status_kind, auth_status_text};
 use rca_core::app::{AppCommand, AppQueryResult, AppService};
-
+use rca_core::auth::AuthState;
 
 /// Handle the login flow: start QR, wait for confirmation, refresh UI at each
 /// stage.  Runs in a background task (tokio or thread).
-pub async fn perform_login(
-    controller: Arc<AppController>,
-    ui_handle: Weak<crate::AppWindow>,
-) {
+pub async fn perform_login(controller: Arc<AppController>, ui_handle: Weak<crate::AppWindow>) {
     // Step 1: initiate login
     if let Err(e) = controller.login_by_qr().await {
         if let Some(ui) = ui_handle.upgrade() {
@@ -38,25 +34,28 @@ pub async fn perform_login(
     };
 
     // refresh UI while waiting
-    if let Some(ui) = ui_handle.upgrade() {
-        if let Ok(AppQueryResult::State(state)) = controller.get_state().await {
-            ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
-            ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
-        }
+    if let Some(ui) = ui_handle.upgrade()
+        && let Ok(AppQueryResult::State(state)) = controller.get_state().await
+    {
+        ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
+        ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
     }
 
     // Step 3: wait for login result
     let _ = controller
         .app
-        .handle_command(AppCommand::WaitLogin { scene_id, timeout_secs: 20 })
+        .handle_command(AppCommand::WaitLogin {
+            scene_id,
+            timeout_secs: 20,
+        })
         .await;
 
     // final sync
-    if let Some(ui) = ui_handle.upgrade() {
-        if let Ok(AppQueryResult::State(state)) = controller.get_state().await {
-            ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
-            ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
-        }
+    if let Some(ui) = ui_handle.upgrade()
+        && let Ok(AppQueryResult::State(state)) = controller.get_state().await
+    {
+        ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
+        ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
     }
 }
 
@@ -67,13 +66,14 @@ mod tests {
     use slint::ComponentHandle;
     use std::sync::Arc;
 
-    #[tokio::test]
-    async fn login_flow_no_panic() {
+    #[test]
+    fn login_flow_no_panic() {
         // bootstrap controller (real initialization but won't perform network in test)
         let controller = Arc::new(AppController::bootstrap().unwrap());
         // create a temporary UI window to obtain a Weak handle
         let ui = AppWindow::new().unwrap();
         let ui_handle = ui.as_weak();
-        perform_login(controller, ui_handle).await;
+        let runtime = controller.runtime.clone();
+        runtime.block_on(perform_login(controller.clone(), ui_handle));
     }
 }

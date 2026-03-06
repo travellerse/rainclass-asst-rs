@@ -1,36 +1,26 @@
-use std::sync::Arc;
 use std::error::Error;
+use std::sync::Arc;
 
-use rca_core::app::{AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, CoreAppService};
+use rca_core::app::{
+    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, CoreAppService,
+};
 use rca_infra::storage::ConfigRepository;
 
 /// High-level controller that encapsulates the core application service and
 /// Tokio runtime.  UI callbacks interact with this object instead of talking
 /// directly to `CoreAppService`.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct AppController {
     pub app: Arc<CoreAppService>,
     pub runtime: Arc<tokio::runtime::Runtime>,
 }
 
-#[allow(dead_code)]
 impl AppController {
     /// Application default configuration used when no existing config is found.
     ///
     /// Copied from the original `main.rs` helper.
     pub fn default_config() -> AppConfigDto {
-        AppConfigDto {
-            monitor_interval_secs: 5,
-            auto_checkin_enabled: true,
-            auto_answer_enabled: true,
-            answer_delay_ms: 500,
-            notify_enabled: true,
-            webhook_url: String::new(),
-            check_update_on_startup: true,
-            tenant: "Hetang".to_string(),
-            auth_state_hint: None,
-        }
+        AppConfigDto::default()
     }
 
     /// Bootstraps the dependencies and returns a ready-to-use controller.
@@ -39,8 +29,12 @@ impl AppController {
         let runtime = Arc::new(tokio::runtime::Runtime::new()?);
 
         let paths = rca_infra::storage::AppPaths::detect()?;
-        let config_repo = Arc::new(rca_infra::storage::JsonFileConfigRepository::new(paths.config_file));
-        let session_repo = Arc::new(rca_infra::storage::JsonFileSessionRepository::new(paths.session_file));
+        let config_repo = Arc::new(rca_infra::storage::JsonFileConfigRepository::new(
+            paths.config_file,
+        ));
+        let session_repo = Arc::new(rca_infra::storage::JsonFileSessionRepository::new(
+            paths.session_file,
+        ));
         let credential_store = Arc::new(rca_infra::storage::KeyringCredentialStore);
 
         let initial_config = runtime.block_on(config_repo.load()).ok();
@@ -51,15 +45,21 @@ impl AppController {
                 rca_infra::storage::TenantKind::Rain => rca_infra::api::TenantHost::Rain,
                 rca_infra::storage::TenantKind::Hetang => rca_infra::api::TenantHost::Hetang,
                 rca_infra::storage::TenantKind::Yangtze => rca_infra::api::TenantHost::Yangtze,
-                rca_infra::storage::TenantKind::YellowRiver => rca_infra::api::TenantHost::YellowRiver,
+                rca_infra::storage::TenantKind::YellowRiver => {
+                    rca_infra::api::TenantHost::YellowRiver
+                }
             })
             .unwrap_or(rca_infra::api::TenantHost::Hetang);
 
         let mut notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> =
             vec![Box::new(rca_infra::notify::LoggingNotifier)];
 
-        if let Some(cfg) = initial_config.as_ref() && !cfg.webhook_url.is_empty() {
-            notifiers.push(Box::new(rca_infra::notify::WebhookNotifier::new(&cfg.webhook_url)));
+        if let Some(cfg) = initial_config.as_ref()
+            && !cfg.webhook_url.is_empty()
+        {
+            notifiers.push(Box::new(rca_infra::notify::WebhookNotifier::new(
+                &cfg.webhook_url,
+            )));
         }
 
         let notifier = Arc::new(rca_infra::notify::MultiNotifier::new(notifiers));
@@ -82,18 +82,26 @@ impl AppController {
             credential_store,
         ));
         let notify_port = Arc::new(rca_infra::bridge::CoreNotifierAdapter::new(notifier));
-        let update_port = Arc::new(rca_infra::bridge::CoreUpdateCheckerAdapter::new(update_checker));
-
-        let app = Arc::new(CoreAppService::new(
-            rca_core::app::CoreAppDeps {
-                api: api_port,
-                config_store: config_port,
-                session_store: session_port,
-                notifier: notify_port,
-                update_checker: update_port,
-            },
-            Self::default_config(),
+        let update_port = Arc::new(rca_infra::bridge::CoreUpdateCheckerAdapter::new(
+            update_checker,
         ));
+
+        let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
+
+        let app = {
+            let _guard = runtime.enter();
+            Arc::new(CoreAppService::new(
+                rca_core::app::CoreAppDeps {
+                    api: api_port,
+                    config_store: config_port,
+                    session_store: session_port,
+                    notifier: notify_port,
+                    update_checker: update_port,
+                    monitor_engine: monitor,
+                },
+                Self::default_config(),
+            ))
+        };
 
         // bootstrap commands
         let _ = runtime.block_on(app.handle_command(AppCommand::LoadConfig));
@@ -101,11 +109,6 @@ impl AppController {
         let _ = runtime.block_on(app.handle_command(AppCommand::RefreshSession));
 
         Ok(AppController { app, runtime })
-    }
-
-    /// Helper for running an async command and ignoring the result.
-    async fn run_command(&self, cmd: AppCommand) -> Result<(), rca_core::app::AppError> {
-        self.app.handle_command(cmd).await
     }
 
     /// Query current application state.
@@ -117,28 +120,11 @@ impl AppController {
         self.app.handle_query(AppQuery::GetConfig).await
     }
 
-    // specific command wrappers
     pub async fn login_by_qr(&self) -> Result<(), rca_core::app::AppError> {
-        self.run_command(AppCommand::LoginByQr).await
-    }
-
-    pub async fn logout(&self) -> Result<(), rca_core::app::AppError> {
-        self.run_command(AppCommand::Logout).await
-    }
-
-    pub async fn start_monitor(&self) -> Result<(), rca_core::app::AppError> {
-        self.run_command(AppCommand::StartMonitor).await
-    }
-
-    pub async fn stop_monitor(&self) -> Result<(), rca_core::app::AppError> {
-        self.run_command(AppCommand::StopMonitor).await
+        self.app.handle_command(AppCommand::LoginByQr).await
     }
 
     pub async fn check_update(&self) -> Result<(), rca_core::app::AppError> {
-        self.run_command(AppCommand::CheckUpdate).await
-    }
-
-    pub async fn save_config(&self, config: AppConfigDto) -> Result<(), rca_core::app::AppError> {
-        self.run_command(AppCommand::SaveConfig { config }).await
+        self.app.handle_command(AppCommand::CheckUpdate).await
     }
 }

@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::time::Duration;
-use tokio::sync::mpsc;
 
 use crate::auth::AuthSession;
 use crate::domain::{CheckinId, Lesson, LessonId, Problem, ProblemId};
@@ -13,6 +12,8 @@ pub struct MonitorConfig {
     pub ws_reconnect_backoff_base: Duration,
     pub ws_reconnect_backoff_max: Duration,
     pub max_parallel_lessons: usize,
+    pub auto_answer_enabled: bool,
+    pub auto_checkin_enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,14 +73,6 @@ pub enum CoreEvent {
     },
 }
 
-#[derive(Debug, Clone)]
-pub enum MonitorCommand {
-    Start,
-    Stop,
-    ReloadConfig,
-    ForceSync,
-}
-
 #[async_trait]
 pub trait MonitorEngine: Send + Sync {
     async fn start(
@@ -88,6 +81,5 @@ pub trait MonitorEngine: Send + Sync {
         cfg: MonitorConfig,
     ) -> Result<MonitorHandle, MonitorError>;
     async fn stop(&self, handle: MonitorHandle) -> Result<(), MonitorError>;
-    fn subscribe_events(&self) -> mpsc::Receiver<CoreEvent>;
-    async fn send_command(&self, command: MonitorCommand) -> Result<(), MonitorError>;
+    fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<CoreEvent>;
 }

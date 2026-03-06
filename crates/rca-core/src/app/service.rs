@@ -1,21 +1,17 @@
-use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use tokio::sync::{mpsc, watch};
-use tokio::task::JoinHandle;
-use tokio::task::JoinSet;
-use tokio::time::{Duration, sleep};
+use tokio::sync::mpsc;
+use tokio::time::Duration;
 
 use crate::app::ports::{
-    ApiPort, ConfigStorePort, LessonWsEvent, NotifierPort, SessionStorePort, UpdateCheckerPort,
+    ApiPort, ConfigStorePort, NotifierPort, SessionStorePort, UpdateCheckerPort,
 };
 use crate::app::{
     AppCommand, AppConfigDto, AppError, AppEvent, AppNotification, AppQuery, AppQueryResult,
     AppService, AppState,
 };
 use crate::auth::{AuthState, QrLoginProgress};
-use crate::domain::{AnswerPayload, Problem, ProblemType};
 use crate::monitor::CoreEvent;
 
 const MAX_RECENT_EVENTS: usize = 200;
@@ -27,18 +23,13 @@ pub struct CoreAppDeps {
     pub session_store: Arc<dyn SessionStorePort>,
     pub notifier: Arc<dyn NotifierPort>,
     pub update_checker: Arc<dyn UpdateCheckerPort>,
+    pub monitor_engine: Arc<dyn crate::monitor::MonitorEngine>,
 }
 
 struct InnerState {
     app_state: AppState,
     config: AppConfigDto,
     subscribers: Vec<mpsc::Sender<AppEvent>>,
-    monitor_runtime: Option<MonitorRuntime>,
-}
-
-struct MonitorRuntime {
-    stop_tx: watch::Sender<bool>,
-    join_handle: JoinHandle<()>,
 }
 
 pub struct CoreAppService {
@@ -48,21 +39,35 @@ pub struct CoreAppService {
 
 impl CoreAppService {
     pub fn new(deps: CoreAppDeps, initial_config: AppConfigDto) -> Self {
-        Self {
-            deps,
-            inner: Arc::new(Mutex::new(InnerState {
-                app_state: AppState {
-                    auth_state: AuthState::LoggedOut,
-                    monitor_running: false,
-                    current_lessons: Vec::new(),
-                    recent_events: Vec::new(),
-                    last_error: None,
-                },
-                config: initial_config,
-                subscribers: Vec::new(),
-                monitor_runtime: None,
-            })),
-        }
+        let mut rx = deps.monitor_engine.subscribe_events();
+
+        let inner = Arc::new(Mutex::new(InnerState {
+            app_state: AppState {
+                auth_state: AuthState::LoggedOut,
+                monitor_running: false,
+                current_lessons: Vec::new(),
+                recent_events: Vec::new(),
+                last_error: None,
+            },
+            config: initial_config,
+            subscribers: Vec::new(),
+        }));
+
+        let inner_clone = inner.clone();
+        tokio::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                {
+                    let mut guard = inner_clone.lock().expect("core app state poisoned");
+                    Self::append_recent_event(&mut guard, event.clone());
+                    if let CoreEvent::MonitorStopped { .. } = event {
+                        guard.app_state.monitor_running = false;
+                    }
+                }
+                Self::emit_state_changed_with_inner(&inner_clone).await;
+            }
+        });
+
+        Self { deps, inner }
     }
 
     async fn emit_event(&self, event: AppEvent) {
@@ -106,51 +111,13 @@ impl CoreAppService {
         }
     }
 
-    fn default_answer_payload(problem: &Problem) -> Option<AnswerPayload> {
-        match problem.problem_type {
-            ProblemType::SingleChoice => {
-                problem.options.first().map(|option| AnswerPayload::Single {
-                    option_id: option.option_id.clone(),
-                })
-            }
-            ProblemType::MultipleChoice => {
-                problem
-                    .options
-                    .first()
-                    .map(|option| AnswerPayload::Multiple {
-                        option_ids: vec![option.option_id.clone()],
-                    })
-            }
-            ProblemType::FillBlank => Some(AnswerPayload::FillBlank {
-                text: String::new(),
-            }),
-            ProblemType::Unknown => None,
-        }
-    }
-
-    async fn stop_monitor_runtime(&self) {
-        let runtime = {
-            let mut inner = self.inner.lock().expect("core app state poisoned");
-            inner.monitor_runtime.take()
-        };
-
-        if let Some(runtime) = runtime {
-            let _ = runtime.stop_tx.send(true);
-            let _ = runtime.join_handle.await;
-        }
-    }
-
     async fn apply_qr_login_progress(
         &self,
-        scene_id: String,
+        _scene_id: String,
         progress: QrLoginProgress,
     ) -> Result<(), AppError> {
         let maybe_notify = match progress {
-            QrLoginProgress::Pending => {
-                let mut inner = self.inner.lock().expect("core app state poisoned");
-                inner.app_state.auth_state = AuthState::WaitingConfirm { scene_id };
-                None
-            }
+            QrLoginProgress::Pending => None,
             QrLoginProgress::Confirmed(session) => {
                 self.deps
                     .session_store
@@ -196,490 +163,43 @@ impl CoreAppService {
         Ok(())
     }
 
-    async fn process_lesson_ws_event(
-        deps: &CoreAppDeps,
-        inner: &Arc<Mutex<InnerState>>,
-        lesson: &crate::domain::Lesson,
-        answered_problems: &mut HashSet<u64>,
-        checked_checkins: &mut HashSet<u64>,
-        event: LessonWsEvent,
-    ) {
-        let config = {
-            let guard = inner.lock().expect("core app state poisoned");
-            guard.config.clone()
-        };
-        let session = match deps.session_store.load_session().await {
-            Ok(Some(session)) => session,
-            Ok(None) => {
-                {
-                    let mut guard = inner.lock().expect("core app state poisoned");
-                    guard.app_state.last_error = Some("session missing for ws event".to_string());
-                    Self::append_recent_event(
-                        &mut guard,
-                        CoreEvent::Error {
-                            code: "WS_SESSION_MISSING",
-                            message: "session missing for ws event".to_string(),
-                        },
-                    );
-                }
-                Self::emit_state_changed_with_inner(inner).await;
-                return;
-            }
-            Err(err) => {
-                {
-                    let mut guard = inner.lock().expect("core app state poisoned");
-                    guard.app_state.last_error = Some(format!("load session failed: {err}"));
-                    Self::append_recent_event(
-                        &mut guard,
-                        CoreEvent::Error {
-                            code: "WS_SESSION_LOAD_FAILED",
-                            message: err.to_string(),
-                        },
-                    );
-                }
-                Self::emit_state_changed_with_inner(inner).await;
-                return;
-            }
-        };
-
-        match event {
-            LessonWsEvent::ProblemPublished { problem } => {
-                {
-                    tracing::info!("收到题目：{}", problem.title);
-                    let mut guard = inner.lock().expect("core app state poisoned");
-                    Self::append_recent_event(
-                        &mut guard,
-                        CoreEvent::ProblemDiscovered {
-                            problem: problem.clone(),
-                        },
-                    );
-                }
-
-                if config.auto_answer_enabled
-                    && answered_problems.insert(problem.problem_id.0.get())
-                    && let Some(payload) = Self::default_answer_payload(&problem)
-                {
-                    match deps
-                        .api
-                        .submit_answer(&session, lesson.lesson_id, problem.problem_id, payload)
-                        .await
-                    {
-                        Ok(()) => {
-                            {
-                                let mut guard = inner.lock().expect("core app state poisoned");
-                                Self::append_recent_event(
-                                    &mut guard,
-                                    CoreEvent::AutoAnswerSubmitted {
-                                        lesson_id: lesson.lesson_id,
-                                        problem_id: problem.problem_id,
-                                    },
-                                );
-                            }
-                            if config.notify_enabled {
-                                let notification = AppNotification {
-                                    title: "自动答题成功".to_string(),
-                                    body: format!(
-                                        "{} 已自动回答题目 {}",
-                                        lesson.course_name,
-                                        problem.problem_id.0.get()
-                                    ),
-                                };
-                                if deps.notifier.notify(notification.clone()).await.is_ok() {
-                                    Self::emit_event_with_inner(
-                                        inner,
-                                        AppEvent::Notification(notification),
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            let mut guard = inner.lock().expect("core app state poisoned");
-                            guard.app_state.last_error = Some(format!(
-                                "auto answer failed for lesson {} problem {}: {}",
-                                lesson.lesson_id.0.get(),
-                                problem.problem_id.0.get(),
-                                err
-                            ));
-                            Self::append_recent_event(
-                                &mut guard,
-                                CoreEvent::Error {
-                                    code: "AUTO_ANSWER_FAILED",
-                                    message: err.to_string(),
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-            LessonWsEvent::CheckinOpened { checkin_id } => {
-                {
-                    tracing::info!(
-                        "签到开启: lesson={} checkin={}",
-                        lesson.lesson_id.0.get(),
-                        checkin_id.0.get()
-                    );
-                    let mut guard = inner.lock().expect("core app state poisoned");
-                    Self::append_recent_event(
-                        &mut guard,
-                        CoreEvent::CheckinDiscovered {
-                            lesson_id: lesson.lesson_id,
-                            checkin_id,
-                        },
-                    );
-                }
-
-                if config.auto_checkin_enabled && checked_checkins.insert(checkin_id.0.get()) {
-                    match deps
-                        .api
-                        .submit_checkin(&session, lesson.lesson_id, checkin_id)
-                        .await
-                    {
-                        Ok(()) => {
-                            {
-                                let mut guard = inner.lock().expect("core app state poisoned");
-                                Self::append_recent_event(
-                                    &mut guard,
-                                    CoreEvent::AutoCheckinSubmitted {
-                                        lesson_id: lesson.lesson_id,
-                                        checkin_id,
-                                    },
-                                );
-                            }
-                            if config.notify_enabled {
-                                let notification = AppNotification {
-                                    title: "自动签到成功".to_string(),
-                                    body: format!("{} 已自动签到", lesson.course_name),
-                                };
-                                if deps.notifier.notify(notification.clone()).await.is_ok() {
-                                    Self::emit_event_with_inner(
-                                        inner,
-                                        AppEvent::Notification(notification),
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            let mut guard = inner.lock().expect("core app state poisoned");
-                            guard.app_state.last_error = Some(format!(
-                                "auto checkin failed for lesson {}: {}",
-                                lesson.lesson_id.0.get(),
-                                err
-                            ));
-                            Self::append_recent_event(
-                                &mut guard,
-                                CoreEvent::Error {
-                                    code: "AUTO_CHECKIN_FAILED",
-                                    message: err.to_string(),
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-            LessonWsEvent::PresentationUpdated { presentation_id } => {
-                tracing::info!(
-                    "Presentation updated: presentation_id={} lesson_id={}",
-                    presentation_id,
-                    lesson.lesson_id.0.get()
-                );
-                let mut guard = inner.lock().expect("core app state poisoned");
-                Self::append_recent_event(
-                    &mut guard,
-                    CoreEvent::PresentationUpdated {
-                        lesson_id: lesson.lesson_id,
-                        presentation_id,
-                    },
-                );
-            }
-            LessonWsEvent::CallPaused { target_name } => {
-                tracing::info!(
-                    "Roll-call initiated: target={} lesson_id={}",
-                    target_name,
-                    lesson.lesson_id.0.get()
-                );
-                let mut guard = inner.lock().expect("core app state poisoned");
-                Self::append_recent_event(
-                    &mut guard,
-                    CoreEvent::CallPaused {
-                        lesson_id: lesson.lesson_id,
-                        target_name,
-                    },
-                );
-            }
-            LessonWsEvent::DanmuPublished { user_name, content } => {
-                tracing::info!(
-                    "Danmu received: sender={:?} content={:?} lesson_id={}",
-                    user_name,
-                    content,
-                    lesson.lesson_id.0.get()
-                );
-                let mut guard = inner.lock().expect("core app state poisoned");
-                Self::append_recent_event(
-                    &mut guard,
-                    CoreEvent::DanmuPublished {
-                        lesson_id: lesson.lesson_id,
-                        user_name,
-                        content,
-                    },
-                );
-            }
-            LessonWsEvent::LessonEnded => {
-                tracing::info!("Lesson ended: lesson_id={}", lesson.lesson_id.0.get());
-                let mut guard = inner.lock().expect("core app state poisoned");
-                Self::append_recent_event(
-                    &mut guard,
-                    CoreEvent::MonitorStopped {
-                        at: chrono::Utc::now(),
-                    },
-                );
-            }
-            LessonWsEvent::Warning { message } => {
-                tracing::warn!("Warning received: {}", message);
-                let mut guard = inner.lock().expect("core app state poisoned");
-                Self::append_recent_event(
-                    &mut guard,
-                    CoreEvent::Warning {
-                        code: "WS_WARNING",
-                        message,
-                    },
-                );
-            }
+    async fn stop_monitor_engine(&self) {
+        if let Err(e) = self
+            .deps
+            .monitor_engine
+            .stop(crate::monitor::MonitorHandle {
+                task_id: crate::monitor::MonitorTaskId(1),
+            })
+            .await
+        {
+            tracing::error!("Failed to stop monitor engine: {}", e);
         }
-
-        Self::emit_state_changed_with_inner(inner).await;
     }
 
-    fn start_background_monitor(&self) {
-        let deps = self.deps.clone();
-        let inner = Arc::clone(&self.inner);
-        let (stop_tx, mut stop_rx) = watch::channel(false);
-        let join_handle = tokio::spawn(async move {
-            let session = match deps.session_store.load_session().await {
-                Ok(Some(session)) => session,
-                Ok(None) => {
-                    {
-                        let mut guard = inner.lock().expect("core app state poisoned");
-                        guard.app_state.last_error =
-                            Some("session missing for monitor".to_string());
-                        Self::append_recent_event(
-                            &mut guard,
-                            CoreEvent::Error {
-                                code: "MONITOR_SESSION_MISSING",
-                                message: "session missing for monitor".to_string(),
-                            },
-                        );
-                    }
-                    Self::emit_state_changed_with_inner(&inner).await;
-                    return;
-                }
-                Err(err) => {
-                    {
-                        let mut guard = inner.lock().expect("core app state poisoned");
-                        guard.app_state.last_error = Some(format!("load session failed: {err}"));
-                        Self::append_recent_event(
-                            &mut guard,
-                            CoreEvent::Error {
-                                code: "MONITOR_SESSION_LOAD_FAILED",
-                                message: err.to_string(),
-                            },
-                        );
-                    }
-                    Self::emit_state_changed_with_inner(&inner).await;
-                    return;
-                }
-            };
+    async fn start_background_monitor(&self) {
+        let session = match self.deps.session_store.load_session().await {
+            Ok(Some(s)) => s,
+            _ => return,
+        };
+        let config = {
+            let guard = self.inner.lock().expect("core app state poisoned");
+            guard.config.clone()
+        };
+        let monitor_cfg = crate::monitor::MonitorConfig {
+            poll_interval: Duration::from_secs(config.monitor_interval_secs),
+            ws_reconnect_backoff_base: Duration::from_secs(5),
+            ws_reconnect_backoff_max: Duration::from_secs(30),
+            max_parallel_lessons: 10,
+            auto_answer_enabled: config.auto_answer_enabled,
+            auto_checkin_enabled: config.auto_checkin_enabled,
+        };
 
-            let lessons = match deps.api.get_on_lessons(&session).await {
-                Ok(lessons) => lessons,
-                Err(err) => {
-                    {
-                        let mut guard = inner.lock().expect("core app state poisoned");
-                        guard.app_state.last_error = Some(format!("load lessons failed: {err}"));
-                        Self::append_recent_event(
-                            &mut guard,
-                            CoreEvent::Error {
-                                code: "MONITOR_LESSON_SYNC_FAILED",
-                                message: err.to_string(),
-                            },
-                        );
-                    }
-                    Self::emit_state_changed_with_inner(&inner).await;
-                    return;
-                }
-            };
-
-            {
-                let mut guard = inner.lock().expect("core app state poisoned");
-                guard.app_state.current_lessons = lessons.clone();
-                guard.app_state.last_error = None;
-                for lesson in &lessons {
-                    if lesson.teacher_name.is_empty() {
-                        tracing::info!("发现课程：{}", lesson.course_name);
-                    } else {
-                        tracing::info!(
-                            "发现课程：{} ({})",
-                            lesson.course_name,
-                            lesson.teacher_name
-                        );
-                    }
-                    Self::append_recent_event(
-                        &mut guard,
-                        CoreEvent::LessonDiscovered {
-                            lesson: lesson.clone(),
-                        },
-                    );
-                }
-            }
-            Self::emit_state_changed_with_inner(&inner).await;
-
-            let mut join_set = JoinSet::new();
-            for lesson in lessons {
-                let deps_for_lesson = deps.clone();
-                let inner_for_lesson = Arc::clone(&inner);
-                let mut stop_rx_lesson = stop_rx.clone();
-                let lesson_clone = lesson.clone();
-                let session_for_lesson = session.clone();
-
-                join_set.spawn(async move {
-                    let mut answered_problems = HashSet::new();
-                    let mut checked_checkins = HashSet::new();
-
-                    loop {
-                        if *stop_rx_lesson.borrow() {
-                            break;
-                        }
-
-                        let connect_result = deps_for_lesson
-                            .api
-                            .connect_lesson_stream(&session_for_lesson, lesson_clone.lesson_id)
-                            .await;
-
-                        let mut ws_rx = match connect_result {
-                            Ok(ws_rx) => ws_rx,
-                            Err(err) => {
-                                {
-                                    let mut guard =
-                                        inner_for_lesson.lock().expect("core app state poisoned");
-                                    guard.app_state.last_error = Some(format!(
-                                        "connect lesson ws failed for {}: {}",
-                                        lesson_clone.lesson_id.0.get(),
-                                        err
-                                    ));
-                                    Self::append_recent_event(
-                                        &mut guard,
-                                        CoreEvent::Error {
-                                            code: "MONITOR_WS_CONNECT_FAILED",
-                                            message: err.to_string(),
-                                        },
-                                    );
-                                }
-                                Self::emit_state_changed_with_inner(&inner_for_lesson).await;
-                                tokio::select! {
-                                    _ = stop_rx_lesson.changed() => {
-                                        if *stop_rx_lesson.borrow() {
-                                            break;
-                                        }
-                                    }
-                                    _ = sleep(Duration::from_secs(2)) => {}
-                                }
-                                continue;
-                            }
-                        };
-
-                        // Fallback: fetch historical problems immediately after ws connect
-                        // to prevent missing early questions
-                        if let Ok(history_problems) = deps_for_lesson
-                            .api
-                            .get_lesson_problems(&session_for_lesson, lesson_clone.lesson_id)
-                            .await
-                        {
-                            for problem in history_problems {
-                                Self::process_lesson_ws_event(
-                                    &deps_for_lesson,
-                                    &inner_for_lesson,
-                                    &lesson_clone,
-                                    &mut answered_problems,
-                                    &mut checked_checkins,
-                                    crate::app::ports::LessonWsEvent::ProblemPublished { problem },
-                                )
-                                .await;
-                            }
-                        }
-
-                        loop {
-                            tokio::select! {
-                                _ = stop_rx_lesson.changed() => {
-                                    if *stop_rx_lesson.borrow() {
-                                        return;
-                                    }
-                                }
-                                maybe_event = ws_rx.recv() => {
-                                    let Some(event) = maybe_event else {
-                                        {
-                                            let mut guard = inner_for_lesson.lock().expect("core app state poisoned");
-                                            Self::append_recent_event(
-                                                &mut guard,
-                                                CoreEvent::Warning {
-                                                    code: "MONITOR_WS_STREAM_CLOSED",
-                                                    message: format!(
-                                                        "lesson ws stream closed: {}",
-                                                        lesson_clone.lesson_id.0.get()
-                                                    ),
-                                                },
-                                            );
-                                        }
-                                        Self::emit_state_changed_with_inner(&inner_for_lesson).await;
-                                        break;
-                                    };
-                                    Self::process_lesson_ws_event(
-                                        &deps_for_lesson,
-                                        &inner_for_lesson,
-                                        &lesson_clone,
-                                        &mut answered_problems,
-                                        &mut checked_checkins,
-                                        event,
-                                    ).await;
-                                }
-                            }
-                        }
-
-                        tokio::select! {
-                            _ = stop_rx_lesson.changed() => {
-                                if *stop_rx_lesson.borrow() {
-                                    break;
-                                }
-                            }
-                            _ = sleep(Duration::from_secs(1)) => {}
-                        }
-                    }
-                });
-            }
-
-            loop {
-                tokio::select! {
-                    _ = stop_rx.changed() => {
-                        if *stop_rx.borrow() {
-                            join_set.abort_all();
-                            while join_set.join_next().await.is_some() {}
-                            break;
-                        }
-                    }
-                    maybe_done = join_set.join_next() => {
-                        if maybe_done.is_none() {
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-
-        let mut guard = self.inner.lock().expect("core app state poisoned");
-        guard.monitor_runtime = Some(MonitorRuntime {
-            stop_tx,
-            join_handle,
-        });
+        if let Err(e) = self.deps.monitor_engine.start(session, monitor_cfg).await {
+            tracing::error!("Failed to start monitor engine: {}", e);
+            let mut guard = self.inner.lock().expect("core app state poisoned");
+            guard.app_state.last_error = Some(e.to_string());
+            guard.app_state.monitor_running = false;
+        }
     }
 }
 
@@ -807,7 +327,7 @@ impl AppService for CoreAppService {
                 self.apply_qr_login_progress(scene_id, progress).await
             }
             AppCommand::Logout => {
-                self.stop_monitor_runtime().await;
+                self.stop_monitor_engine().await;
                 self.deps
                     .session_store
                     .clear_session()
@@ -839,12 +359,12 @@ impl AppService for CoreAppService {
                     inner.app_state.monitor_running = true;
                     inner.app_state.last_error = None;
                 }
-                self.start_background_monitor();
+                self.start_background_monitor().await;
                 self.emit_state_changed().await;
                 Ok(())
             }
             AppCommand::StopMonitor => {
-                self.stop_monitor_runtime().await;
+                self.stop_monitor_engine().await;
                 {
                     let mut inner = self.inner.lock().expect("core app state poisoned");
                     inner.app_state.monitor_running = false;
@@ -1112,17 +632,7 @@ mod tests {
     }
 
     fn default_config() -> AppConfigDto {
-        AppConfigDto {
-            monitor_interval_secs: 5,
-            auto_checkin_enabled: true,
-            auto_answer_enabled: true,
-            answer_delay_ms: 500,
-            notify_enabled: true,
-            webhook_url: String::new(),
-            check_update_on_startup: true,
-            tenant: "Hetang".to_string(),
-            auth_state_hint: None,
-        }
+        AppConfigDto::default()
     }
 
     #[tokio::test]
@@ -1135,6 +645,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1179,6 +690,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1225,6 +737,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1269,6 +782,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1303,6 +817,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1330,6 +845,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1354,6 +870,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1377,6 +894,7 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
             default_config(),
         );
@@ -1419,7 +937,10 @@ mod tests {
 
     #[tokio::test]
     async fn monitor_should_emit_auto_answer_event_when_problem_available() {
-        let ports = Arc::new(MockPorts::new(default_config()));
+        let mut config = default_config();
+        config.auto_answer_enabled = true;
+        config.monitor_interval_secs = 1; // Faster poll for tests
+        let ports = Arc::new(MockPorts::new(config.clone()));
         ports
             .lessons
             .lock()
@@ -1450,6 +971,8 @@ mod tests {
                 deadline_at: None,
             });
 
+        let mut config = default_config();
+        config.monitor_interval_secs = 1; // Faster poll for tests
         let app = CoreAppService::new(
             CoreAppDeps {
                 api: ports.clone(),
@@ -1457,8 +980,9 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
             },
-            default_config(),
+            config,
         );
 
         app.handle_command(AppCommand::LoginByQr)
@@ -1474,7 +998,7 @@ mod tests {
             .await
             .expect("start monitor failed");
 
-        sleep(Duration::from_millis(30)).await;
+        sleep(Duration::from_millis(1500)).await;
 
         let events = app
             .handle_query(AppQuery::GetRecentEvents { limit: 20 })

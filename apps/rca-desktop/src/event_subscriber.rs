@@ -7,10 +7,7 @@ use rca_core::app::AppService;
 
 /// Spawn a background loop that listens to application events and triggers UI
 /// state sync whenever a new event arrives.
-pub fn start_event_loop(
-    controller: Arc<AppController>,
-    ui_handle: Weak<crate::AppWindow>,
-) {
+pub fn start_event_loop(controller: Arc<AppController>, ui_handle: Weak<crate::AppWindow>) {
     let mut rx = controller.app.subscribe_events();
     let runtime = controller.runtime.clone();
     std::thread::spawn(move || {

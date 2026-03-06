@@ -27,3 +27,19 @@ pub struct AppConfigDto {
     pub tenant: String,
     pub auth_state_hint: Option<AuthState>,
 }
+
+impl Default for AppConfigDto {
+    fn default() -> Self {
+        Self {
+            monitor_interval_secs: 5,
+            auto_checkin_enabled: true,
+            auto_answer_enabled: true,
+            answer_delay_ms: 500,
+            notify_enabled: true,
+            webhook_url: String::new(),
+            check_update_on_startup: true,
+            tenant: "Hetang".to_string(),
+            auth_state_hint: None,
+        }
+    }
+}

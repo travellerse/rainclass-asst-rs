@@ -1,7 +1,7 @@
 use chrono::Local;
+use rca_core::app::AppQueryResult;
 use rca_core::auth::AuthState;
 use rca_core::monitor::CoreEvent;
-use rca_core::app::AppQueryResult;
 
 use crate::slint_generatedAppWindow::{EventRow as UiEventRow, LessonRow as UiLessonRow};
 
@@ -117,9 +117,7 @@ pub fn format_core_event(event: &CoreEvent) -> (&'static str, String) {
 /// This function is synchronous since Slint callbacks execute on the
 /// UI thread. It uses the controller's runtime to wait for the query result.
 pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::AppController) {
-    let result = controller
-        .runtime
-        .block_on(controller.get_state());
+    let result = controller.runtime.block_on(controller.get_state());
     match result {
         Ok(AppQueryResult::State(state)) => {
             ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
@@ -127,7 +125,12 @@ pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::
 
             ui.set_monitor_running(state.monitor_running);
             ui.set_monitor_status_text(
-                if state.monitor_running { "运行中" } else { "未启动" }.into(),
+                if state.monitor_running {
+                    "运行中"
+                } else {
+                    "未启动"
+                }
+                .into(),
             );
             ui.set_last_error_text(state.last_error.unwrap_or_default().into());
 
@@ -205,10 +208,12 @@ mod tests {
 
     #[test]
     fn format_event_warning() {
-        let ev = CoreEvent::Warning { code: "X", message: "hi".into() };
+        let ev = CoreEvent::Warning {
+            code: "X",
+            message: "hi".into(),
+        };
         let (kind, msg) = format_core_event(&ev);
         assert_eq!(kind, "warning");
         assert!(msg.contains("hi"));
     }
 }
-

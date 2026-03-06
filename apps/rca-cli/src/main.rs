@@ -59,17 +59,7 @@ enum Command {
 }
 
 fn default_config() -> AppConfigDto {
-    AppConfigDto {
-        monitor_interval_secs: 5,
-        auto_checkin_enabled: true,
-        auto_answer_enabled: true,
-        answer_delay_ms: 500,
-        notify_enabled: true,
-        webhook_url: String::new(),
-        check_update_on_startup: true,
-        tenant: "Hetang".to_string(),
-        auth_state_hint: None,
-    }
+    AppConfigDto::default()
 }
 
 fn auth_state_summary(state: &AuthState) -> String {
@@ -182,6 +172,8 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
             timeout_secs: 15,
         })?);
 
+    let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
+
     let app = Arc::new(CoreAppService::new(
         CoreAppDeps {
             api: api_port,
@@ -189,6 +181,7 @@ fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
             session_store: Arc::new(CoreSessionStoreAdapter::new(session_repo, credential_store)),
             notifier: Arc::new(CoreNotifierAdapter::new(notifier)),
             update_checker: Arc::new(CoreUpdateCheckerAdapter::new(update_checker)),
+            monitor_engine: monitor,
         },
         default_config(),
     ));

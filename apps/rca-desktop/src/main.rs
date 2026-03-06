@@ -3,18 +3,18 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use tracing_subscriber::EnvFilter;
 use rca_core::app::{AppCommand, AppConfigDto, AppQueryResult, AppService};
+use tracing_subscriber::EnvFilter;
 
 slint::include_modules!();
 
 mod app_controller;
-mod ui_helpers;
-mod login_flow;
 mod event_subscriber;
+mod login_flow;
+mod ui_helpers;
 
 use app_controller::AppController;
-use ui_helpers::{sync_ui_state, sync_config_to_ui};
+use ui_helpers::{sync_config_to_ui, sync_ui_state};
 
 /// Run an `AppCommand` on the controller in a background thread and refresh the UI.
 fn spawn_command(
@@ -23,7 +23,10 @@ fn spawn_command(
     cmd: AppCommand,
 ) {
     let _ = std::thread::spawn(move || {
-        if let Err(e) = controller.runtime.block_on(controller.app.handle_command(cmd)) {
+        if let Err(e) = controller
+            .runtime
+            .block_on(controller.app.handle_command(cmd))
+        {
             let ctrl = controller.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = ui_handle.upgrade() {
@@ -41,8 +44,6 @@ fn spawn_command(
         });
     });
 }
-
-
 
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
@@ -84,7 +85,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let ui_handle = ui_handle.clone();
             std::thread::spawn(move || {
                 let rt = controller.runtime.clone();
-                let _ = rt.block_on(async move {
+                rt.block_on(async move {
                     login_flow::perform_login(controller, ui_handle).await;
                 });
             });
@@ -107,7 +108,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let controller = controller.clone();
         let ui_handle = ui.as_weak();
         move || {
-            spawn_command(controller.clone(), ui_handle.clone(), AppCommand::StartMonitor);
+            spawn_command(
+                controller.clone(),
+                ui_handle.clone(),
+                AppCommand::StartMonitor,
+            );
         }
     });
 
@@ -116,7 +121,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let controller = controller.clone();
         let ui_handle = ui.as_weak();
         move || {
-            spawn_command(controller.clone(), ui_handle.clone(), AppCommand::StopMonitor);
+            spawn_command(
+                controller.clone(),
+                ui_handle.clone(),
+                AppCommand::StopMonitor,
+            );
         }
     });
 
@@ -125,7 +134,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         let controller = controller.clone();
         let ui_handle = ui.as_weak();
         move || {
-            spawn_command(controller.clone(), ui_handle.clone(), AppCommand::CheckUpdate);
+            spawn_command(
+                controller.clone(),
+                ui_handle.clone(),
+                AppCommand::CheckUpdate,
+            );
         }
     });
 

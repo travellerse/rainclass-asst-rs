@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use log::{error, info};
 use reqwest::Client;
 use serde_json::json;
+use tracing::{error, info};
 
 use crate::notify::{Notification, Notifier, NotifyError};
 

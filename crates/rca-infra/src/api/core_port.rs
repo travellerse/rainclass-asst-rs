@@ -500,7 +500,7 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|err| ApiPortError::request("on-lesson decode", err))?;
 
-        log::debug!("on-lesson raw response: {:?}", value);
+        tracing::debug!("on-lesson raw response: {:?}", value);
 
         let data = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
         let classrooms = data
