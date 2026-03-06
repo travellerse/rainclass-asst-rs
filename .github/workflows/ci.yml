@@ -2,7 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: ["master", "dev"]
+    paths:
+      - "crates/**"
+      - "xtask/**"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - ".github/workflows/ci.yml"
   pull_request:
 
 jobs:
