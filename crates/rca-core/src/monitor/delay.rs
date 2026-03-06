@@ -208,4 +208,59 @@ mod tests {
             DelayStrategy::Custom { percent: 50 }
         );
     }
+
+    #[test]
+    fn to_type_code_roundtrip() {
+        assert_eq!(DelayStrategy::Moderate.to_type_code(), 1);
+        assert_eq!(DelayStrategy::Aggressive.to_type_code(), 2);
+        assert_eq!(DelayStrategy::Conservative.to_type_code(), 3);
+        assert_eq!(DelayStrategy::Custom { percent: 42 }.to_type_code(), 4);
+    }
+
+    #[test]
+    fn custom_percent_zero_produces_instant() {
+        // 0% target → lambda ≈ 0, sample ≈ 0, but clamped to 1.0
+        let d = calculate_wait_time(Some(60), &DelayStrategy::Custom { percent: 0 });
+        let secs = d.as_secs_f64();
+        assert!((1.0..=55.0).contains(&secs));
+    }
+
+    #[test]
+    fn custom_percent_100_produces_long_delay() {
+        let mut total = 0.0;
+        let n = 500;
+        for _ in 0..n {
+            let d = calculate_wait_time(Some(60), &DelayStrategy::Custom { percent: 100 });
+            total += d.as_secs_f64();
+        }
+        let avg = total / n as f64;
+        // 100% of 60 → target 57 (clamped to 95%), should produce long delays
+        assert!(avg > 30.0, "average delay {avg} too short for 100% target");
+    }
+
+    #[test]
+    fn custom_percent_over_100_is_clamped() {
+        let strategy = DelayStrategy::Custom { percent: 150 };
+        // Should behave the same as percent: 100
+        let d = calculate_wait_time(Some(60), &strategy);
+        let secs = d.as_secs_f64();
+        assert!((1.0..=55.0).contains(&secs));
+    }
+
+    #[test]
+    fn custom_from_type_code_over_100_is_clamped() {
+        let strategy = DelayStrategy::from_type_code(4, 200);
+        assert_eq!(strategy, DelayStrategy::Custom { percent: 100 });
+    }
+
+    #[test]
+    fn negative_limit_treated_as_zero() {
+        let d = calculate_wait_time(Some(-10), &DelayStrategy::Moderate);
+        assert_eq!(d, Duration::ZERO);
+    }
+
+    #[test]
+    fn default_strategy_is_moderate() {
+        assert_eq!(DelayStrategy::default(), DelayStrategy::Moderate);
+    }
 }

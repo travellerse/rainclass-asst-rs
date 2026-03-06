@@ -473,3 +473,176 @@ impl MonitorEngine for CoreMonitorEngine {
         guard.event_tx.subscribe()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+
+    use chrono::Utc;
+
+    use crate::domain::*;
+
+    use super::CoreMonitorEngine;
+
+    fn make_problem(
+        problem_type: ProblemType,
+        options: Vec<ProblemOption>,
+        correct_answers: Vec<String>,
+        blanks: Vec<BlankAnswer>,
+    ) -> Problem {
+        Problem {
+            lesson_id: LessonId(NonZeroU64::new(1).unwrap()),
+            problem_id: ProblemId(NonZeroU64::new(1).unwrap()),
+            problem_type,
+            title: "test".to_string(),
+            options,
+            correct_answers,
+            blanks,
+            limit_secs: Some(60),
+            published_at: Utc::now(),
+            deadline_at: None,
+        }
+    }
+
+    fn opts(ids: &[&str]) -> Vec<ProblemOption> {
+        ids.iter()
+            .map(|id| ProblemOption {
+                option_id: id.to_string(),
+                text: format!("Option {id}"),
+            })
+            .collect()
+    }
+
+    // ── SingleChoice ───────────────────────────────────────────
+
+    #[test]
+    fn single_choice_with_correct_answer() {
+        let p = make_problem(
+            ProblemType::SingleChoice,
+            opts(&["A", "B"]),
+            vec!["B".into()],
+            vec![],
+        );
+        let payload = CoreMonitorEngine::resolve_answer_payload(&p, false);
+        assert_eq!(
+            payload,
+            Some(AnswerPayload::Single {
+                option_id: "B".into()
+            })
+        );
+    }
+
+    #[test]
+    fn single_choice_no_answer_random_guess() {
+        let p = make_problem(ProblemType::SingleChoice, opts(&["X", "Y"]), vec![], vec![]);
+        let payload = CoreMonitorEngine::resolve_answer_payload(&p, true);
+        assert_eq!(
+            payload,
+            Some(AnswerPayload::Single {
+                option_id: "X".into()
+            })
+        );
+    }
+
+    #[test]
+    fn single_choice_no_answer_no_guess() {
+        let p = make_problem(ProblemType::SingleChoice, opts(&["X"]), vec![], vec![]);
+        assert!(CoreMonitorEngine::resolve_answer_payload(&p, false).is_none());
+    }
+
+    #[test]
+    fn single_choice_no_answer_no_options() {
+        let p = make_problem(ProblemType::SingleChoice, vec![], vec![], vec![]);
+        assert!(CoreMonitorEngine::resolve_answer_payload(&p, true).is_none());
+    }
+
+    // ── MultipleChoice ─────────────────────────────────────────
+
+    #[test]
+    fn multiple_choice_with_correct_answers() {
+        let p = make_problem(
+            ProblemType::MultipleChoice,
+            opts(&["A", "B", "C"]),
+            vec!["A".into(), "C".into()],
+            vec![],
+        );
+        let payload = CoreMonitorEngine::resolve_answer_payload(&p, false);
+        assert_eq!(
+            payload,
+            Some(AnswerPayload::Multiple {
+                option_ids: vec!["A".into(), "C".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn multiple_choice_no_answer_random_guess() {
+        let p = make_problem(
+            ProblemType::MultipleChoice,
+            opts(&["A", "B"]),
+            vec![],
+            vec![],
+        );
+        let payload = CoreMonitorEngine::resolve_answer_payload(&p, true);
+        assert_eq!(
+            payload,
+            Some(AnswerPayload::Multiple {
+                option_ids: vec!["A".into()]
+            })
+        );
+    }
+
+    #[test]
+    fn multiple_choice_no_answer_no_guess() {
+        let p = make_problem(ProblemType::MultipleChoice, opts(&["A"]), vec![], vec![]);
+        assert!(CoreMonitorEngine::resolve_answer_payload(&p, false).is_none());
+    }
+
+    // ── FillBlank ──────────────────────────────────────────────
+
+    #[test]
+    fn fill_blank_with_blanks() {
+        let blanks = vec![
+            BlankAnswer {
+                accepted_values: vec!["hello".into(), "hi".into()],
+            },
+            BlankAnswer {
+                accepted_values: vec!["world".into()],
+            },
+        ];
+        let p = make_problem(ProblemType::FillBlank, vec![], vec![], blanks);
+        let payload = CoreMonitorEngine::resolve_answer_payload(&p, false);
+        assert_eq!(
+            payload,
+            Some(AnswerPayload::FillBlank {
+                text: "hello,world".into()
+            })
+        );
+    }
+
+    #[test]
+    fn fill_blank_no_blanks_random_guess() {
+        let p = make_problem(ProblemType::FillBlank, vec![], vec![], vec![]);
+        let payload = CoreMonitorEngine::resolve_answer_payload(&p, true);
+        assert_eq!(
+            payload,
+            Some(AnswerPayload::FillBlank {
+                text: String::new()
+            })
+        );
+    }
+
+    #[test]
+    fn fill_blank_no_blanks_no_guess() {
+        let p = make_problem(ProblemType::FillBlank, vec![], vec![], vec![]);
+        assert!(CoreMonitorEngine::resolve_answer_payload(&p, false).is_none());
+    }
+
+    // ── Unknown ────────────────────────────────────────────────
+
+    #[test]
+    fn unknown_type_always_none() {
+        let p = make_problem(ProblemType::Unknown, opts(&["A"]), vec!["A".into()], vec![]);
+        assert!(CoreMonitorEngine::resolve_answer_payload(&p, true).is_none());
+    }
+}

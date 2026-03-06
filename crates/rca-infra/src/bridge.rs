@@ -252,3 +252,226 @@ impl UpdateCheckerPort for CoreUpdateCheckerAdapter {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use mockall::mock;
+    use rca_core::app::ports::{ConfigStorePort, NotifierPort, SessionStorePort};
+
+    use super::*;
+    use crate::notify::NotifyError;
+    use crate::storage::StorageError;
+
+    // ── Mocks ──────────────────────────────────────────────────
+
+    mock! {
+        ConfigRepo {}
+        #[async_trait::async_trait]
+        impl ConfigRepository for ConfigRepo {
+            async fn load(&self) -> Result<AppConfig, StorageError>;
+            async fn save(&self, config: &AppConfig) -> Result<(), StorageError>;
+        }
+    }
+
+    mock! {
+        SessionRepo {}
+        #[async_trait::async_trait]
+        impl SessionRepository for SessionRepo {
+            async fn load(&self) -> Result<Option<SessionRecord>, StorageError>;
+            async fn save(&self, session: &SessionRecord) -> Result<(), StorageError>;
+            async fn clear(&self) -> Result<(), StorageError>;
+        }
+    }
+
+    struct FakeCredStore {
+        tokens: std::sync::Mutex<Option<(String, Option<String>)>>,
+    }
+
+    impl FakeCredStore {
+        fn new(tokens: Option<(String, Option<String>)>) -> Self {
+            Self {
+                tokens: std::sync::Mutex::new(tokens),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl CredentialStore for FakeCredStore {
+        async fn save_token_pair(
+            &self,
+            _service: &str,
+            _account: &str,
+            _access: &str,
+            _refresh: Option<&str>,
+        ) -> Result<(), StorageError> {
+            Ok(())
+        }
+        async fn load_token_pair(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<Option<(String, Option<String>)>, StorageError> {
+            Ok(self.tokens.lock().unwrap().clone())
+        }
+        async fn delete_token_pair(
+            &self,
+            _service: &str,
+            _account: &str,
+        ) -> Result<(), StorageError> {
+            *self.tokens.lock().unwrap() = None;
+            Ok(())
+        }
+    }
+
+    mock! {
+        TestNotifier {}
+        #[async_trait::async_trait]
+        impl Notifier for TestNotifier {
+            async fn notify(&self, msg: Notification) -> Result<(), NotifyError>;
+        }
+    }
+
+    // ── CoreConfigStoreAdapter ─────────────────────────────────
+
+    #[tokio::test]
+    async fn config_adapter_load_maps_tenant_correctly() {
+        let mut mock = MockConfigRepo::new();
+        mock.expect_load().returning(|| {
+            Ok(AppConfig {
+                active_tenant: TenantKind::Rain,
+                ..Default::default()
+            })
+        });
+
+        let adapter = CoreConfigStoreAdapter::new(Arc::new(mock));
+        let dto = adapter.load_config().await.unwrap();
+        assert_eq!(dto.tenant, "Rain");
+    }
+
+    #[tokio::test]
+    async fn config_adapter_save_maps_tenant_back() {
+        let mut mock = MockConfigRepo::new();
+        mock.expect_save()
+            .withf(|cfg: &AppConfig| cfg.active_tenant == TenantKind::Yangtze)
+            .returning(|_| Ok(()));
+
+        let adapter = CoreConfigStoreAdapter::new(Arc::new(mock));
+        let dto = rca_core::app::AppConfigDto {
+            tenant: "Yangtze".to_string(),
+            ..Default::default()
+        };
+        adapter.save_config(&dto).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn config_adapter_save_unknown_tenant_defaults_to_hetang() {
+        let mut mock = MockConfigRepo::new();
+        mock.expect_save()
+            .withf(|cfg: &AppConfig| cfg.active_tenant == TenantKind::Hetang)
+            .returning(|_| Ok(()));
+
+        let adapter = CoreConfigStoreAdapter::new(Arc::new(mock));
+        let dto = rca_core::app::AppConfigDto {
+            tenant: "UnknownTenant".to_string(),
+            ..Default::default()
+        };
+        adapter.save_config(&dto).await.unwrap();
+    }
+
+    // ── CoreSessionStoreAdapter ────────────────────────────────
+
+    #[tokio::test]
+    async fn session_adapter_load_from_keyring() {
+        let mut session_mock = MockSessionRepo::new();
+        session_mock.expect_load().returning(|| {
+            Ok(Some(SessionRecord {
+                user_id: 42,
+                access_token: "__keyring__".to_string(),
+                refresh_token: None,
+                expires_at_unix_ms: Some(99999),
+            }))
+        });
+
+        let cred = FakeCredStore::new(Some((
+            "keyring-access".to_string(),
+            Some("keyring-refresh".to_string()),
+        )));
+
+        let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
+        let session = adapter.load_session().await.unwrap().unwrap();
+        assert_eq!(session.access_token, "keyring-access");
+        assert_eq!(session.refresh_token, Some("keyring-refresh".to_string()));
+    }
+
+    #[tokio::test]
+    async fn session_adapter_load_fallback_to_file_token() {
+        let mut session_mock = MockSessionRepo::new();
+        session_mock.expect_load().returning(|| {
+            Ok(Some(SessionRecord {
+                user_id: 42,
+                access_token: "file-access".to_string(),
+                refresh_token: Some("file-refresh".to_string()),
+                expires_at_unix_ms: None,
+            }))
+        });
+
+        // Keyring returns None → should fallback to file token
+        let cred = FakeCredStore::new(None);
+
+        let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
+        let session = adapter.load_session().await.unwrap().unwrap();
+        assert_eq!(session.access_token, "file-access");
+    }
+
+    #[tokio::test]
+    async fn session_adapter_load_none_when_no_record() {
+        let mut session_mock = MockSessionRepo::new();
+        session_mock.expect_load().returning(|| Ok(None));
+
+        let cred = FakeCredStore::new(None);
+
+        let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
+        let session = adapter.load_session().await.unwrap();
+        assert!(session.is_none());
+    }
+
+    #[tokio::test]
+    async fn session_adapter_clear_deletes_both() {
+        let mut session_mock = MockSessionRepo::new();
+        session_mock.expect_load().returning(|| {
+            Ok(Some(SessionRecord {
+                user_id: 42,
+                access_token: "tok".to_string(),
+                refresh_token: None,
+                expires_at_unix_ms: None,
+            }))
+        });
+        session_mock.expect_clear().returning(|| Ok(()));
+
+        let cred = FakeCredStore::new(Some(("tok".to_string(), None)));
+
+        let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
+        adapter.clear_session().await.unwrap();
+    }
+
+    // ── CoreNotifierAdapter ────────────────────────────────────
+
+    #[tokio::test]
+    async fn notifier_adapter_converts_app_notification() {
+        let mut mock = MockTestNotifier::new();
+        mock.expect_notify()
+            .withf(|msg: &Notification| msg.title == "测试标题" && msg.body == "测试内容")
+            .returning(|_| Ok(()));
+
+        let adapter = CoreNotifierAdapter::new(Arc::new(mock));
+        adapter
+            .notify(AppNotification {
+                title: "测试标题".to_string(),
+                body: "测试内容".to_string(),
+            })
+            .await
+            .unwrap();
+    }
+}

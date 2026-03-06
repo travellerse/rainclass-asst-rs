@@ -141,4 +141,52 @@ mod tests {
         assert!(!tracker.track_and_decide("A", 2, 60, 60));
         assert!(!tracker.track_and_decide("A", 2, 60, 60));
     }
+
+    #[test]
+    fn empty_content_never_triggers() {
+        let mut tracker = DanmuTracker::new();
+        assert!(!tracker.track_and_decide("", 1, 60, 60));
+        assert!(!tracker.track_and_decide("   ", 1, 60, 60));
+        assert!(!tracker.track_and_decide("\t\n", 1, 60, 60));
+    }
+
+    #[test]
+    fn threshold_one_triggers_immediately() {
+        let mut tracker = DanmuTracker::new();
+        assert!(tracker.track_and_decide("hello", 1, 60, 60));
+    }
+
+    #[test]
+    fn different_content_independent() {
+        let mut tracker = DanmuTracker::new();
+        // Track "A" twice out of 3 threshold
+        assert!(!tracker.track_and_decide("A", 3, 60, 60));
+        assert!(!tracker.track_and_decide("A", 3, 60, 60));
+        // "B" shouldn't benefit from "A"'s count
+        assert!(!tracker.track_and_decide("B", 3, 60, 60));
+        // "A" reaches threshold
+        assert!(tracker.track_and_decide("A", 3, 60, 60));
+        // "B" still only at 1
+        assert!(!tracker.track_and_decide("B", 3, 60, 60));
+    }
+
+    #[test]
+    fn cleanup_removes_stale_entries() {
+        let mut tracker = DanmuTracker::new();
+        // Track some content (these entries are "fresh")
+        tracker.track_and_decide("X", 10, 60, 60);
+        tracker.track_and_decide("Y", 10, 60, 60);
+        // Cleanup with a 60s window should keep fresh entries
+        tracker.cleanup(60, 60);
+        // History should still be present (entries are within window)
+        assert!(!tracker.history.is_empty());
+    }
+
+    #[test]
+    fn whitespace_is_trimmed() {
+        let mut tracker = DanmuTracker::new();
+        assert!(!tracker.track_and_decide(" hello ", 2, 60, 60));
+        // "hello" (trimmed) should count as same
+        assert!(tracker.track_and_decide("hello", 2, 60, 60));
+    }
 }

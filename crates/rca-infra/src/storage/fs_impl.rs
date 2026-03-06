@@ -114,3 +114,108 @@ impl SessionRepository for JsonFileSessionRepository {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn config_load_creates_default_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.json");
+        let repo = JsonFileConfigRepository::new(&file);
+
+        let config = repo.load().await.unwrap();
+        assert_eq!(config.monitor_interval_secs, 5);
+        assert!(config.auto_checkin_enabled);
+
+        // File should now exist with default content
+        assert!(file.exists());
+    }
+
+    #[tokio::test]
+    async fn config_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.json");
+        let repo = JsonFileConfigRepository::new(&file);
+
+        let config = AppConfig {
+            monitor_interval_secs: 42,
+            auto_answer_enabled: false,
+            webhook_url: "https://example.com".to_string(),
+            ..Default::default()
+        };
+
+        repo.save(&config).await.unwrap();
+        let loaded = repo.load().await.unwrap();
+
+        assert_eq!(loaded.monitor_interval_secs, 42);
+        assert!(!loaded.auto_answer_enabled);
+        assert_eq!(loaded.webhook_url, "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn session_save_and_load_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session.json");
+        let repo = JsonFileSessionRepository::new(&file);
+
+        let session = SessionRecord {
+            user_id: 12345,
+            access_token: "tok-abc".to_string(),
+            refresh_token: Some("ref-xyz".to_string()),
+            expires_at_unix_ms: Some(9999999),
+        };
+
+        repo.save(&session).await.unwrap();
+        let loaded = repo.load().await.unwrap().expect("session should exist");
+
+        assert_eq!(loaded.user_id, 12345);
+        assert_eq!(loaded.access_token, "tok-abc");
+        assert_eq!(loaded.refresh_token, Some("ref-xyz".to_string()));
+        assert_eq!(loaded.expires_at_unix_ms, Some(9999999));
+    }
+
+    #[tokio::test]
+    async fn session_clear_removes_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("session.json");
+        let repo = JsonFileSessionRepository::new(&file);
+
+        let session = SessionRecord {
+            user_id: 1,
+            access_token: "tok".to_string(),
+            refresh_token: None,
+            expires_at_unix_ms: None,
+        };
+        repo.save(&session).await.unwrap();
+        assert!(file.exists());
+
+        repo.clear().await.unwrap();
+        assert!(!file.exists());
+
+        // Loading after clear should return None
+        let loaded = repo.load().await.unwrap();
+        assert!(loaded.is_none());
+    }
+
+    #[tokio::test]
+    async fn session_load_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("nonexistent.json");
+        let repo = JsonFileSessionRepository::new(&file);
+
+        let loaded = repo.load().await.unwrap();
+        assert!(loaded.is_none());
+    }
+
+    #[tokio::test]
+    async fn session_clear_missing_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("nonexistent.json");
+        let repo = JsonFileSessionRepository::new(&file);
+
+        // Clearing a non-existent file should succeed
+        repo.clear().await.unwrap();
+    }
+}

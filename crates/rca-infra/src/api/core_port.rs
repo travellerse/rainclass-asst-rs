@@ -1253,3 +1253,281 @@ impl ApiPort for YktApiPort {
         Ok(rx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use rca_core::domain::ProblemType;
+
+    use super::*;
+
+    // ── TenantHost ─────────────────────────────────────────────
+
+    #[test]
+    fn tenant_host_rain() {
+        assert_eq!(TenantHost::Rain.as_host(), "www.yuketang.cn");
+    }
+
+    #[test]
+    fn tenant_host_hetang() {
+        assert_eq!(TenantHost::Hetang.as_host(), "pro.yuketang.cn");
+    }
+
+    #[test]
+    fn tenant_host_yangtze() {
+        assert_eq!(TenantHost::Yangtze.as_host(), "changjiang.yuketang.cn");
+    }
+
+    #[test]
+    fn tenant_host_yellowriver() {
+        assert_eq!(TenantHost::YellowRiver.as_host(), "huanghe.yuketang.cn");
+    }
+
+    // ── map_problem_type ───────────────────────────────────────
+
+    #[test]
+    fn map_problem_type_numeric_codes() {
+        assert_eq!(map_problem_type(&json!(1)), ProblemType::SingleChoice);
+        assert_eq!(map_problem_type(&json!(2)), ProblemType::MultipleChoice);
+        assert_eq!(map_problem_type(&json!(3)), ProblemType::FillBlank);
+        assert_eq!(map_problem_type(&json!(99)), ProblemType::Unknown);
+    }
+
+    #[test]
+    fn map_problem_type_string_patterns() {
+        assert_eq!(
+            map_problem_type(&json!("single")),
+            ProblemType::SingleChoice
+        );
+        assert_eq!(
+            map_problem_type(&json!("choice")),
+            ProblemType::SingleChoice
+        );
+        assert_eq!(
+            map_problem_type(&json!("MULTIPLE")),
+            ProblemType::MultipleChoice
+        );
+        assert_eq!(
+            map_problem_type(&json!("fill_blank")),
+            ProblemType::FillBlank
+        );
+        assert_eq!(map_problem_type(&json!("fill")), ProblemType::FillBlank);
+        assert_eq!(map_problem_type(&json!("blank")), ProblemType::FillBlank);
+        assert_eq!(map_problem_type(&json!("essay")), ProblemType::Unknown);
+        assert_eq!(map_problem_type(&json!("")), ProblemType::Unknown);
+    }
+
+    #[test]
+    fn map_problem_type_null() {
+        assert_eq!(map_problem_type(&Value::Null), ProblemType::Unknown);
+    }
+
+    // ── parse_problem_options ──────────────────────────────────
+
+    #[test]
+    fn parse_options_from_object_array() {
+        let problem = json!({
+            "options": [
+                {"optionId": "A", "text": "Alpha"},
+                {"optionId": "B", "text": "Beta"},
+            ]
+        });
+        let opts = parse_problem_options(&problem);
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0].option_id, "A");
+        assert_eq!(opts[0].text, "Alpha");
+        assert_eq!(opts[1].option_id, "B");
+    }
+
+    #[test]
+    fn parse_options_from_string_array() {
+        let problem = json!({
+            "options": ["Yes", "No"]
+        });
+        let opts = parse_problem_options(&problem);
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0].option_id, "0");
+        assert_eq!(opts[0].text, "Yes");
+        assert_eq!(opts[1].option_id, "1");
+    }
+
+    #[test]
+    fn parse_options_fallback_to_choices_key() {
+        let problem = json!({
+            "choices": [{"id": "X", "content": "Choice X"}]
+        });
+        let opts = parse_problem_options(&problem);
+        assert_eq!(opts.len(), 1);
+        assert_eq!(opts[0].option_id, "X");
+        assert_eq!(opts[0].text, "Choice X");
+    }
+
+    #[test]
+    fn parse_options_fallback_to_answers_when_empty() {
+        let problem = json!({
+            "answers": ["opt1", "opt2"]
+        });
+        let opts = parse_problem_options(&problem);
+        assert_eq!(opts.len(), 2);
+        assert_eq!(opts[0].option_id, "opt1");
+    }
+
+    #[test]
+    fn parse_options_empty_when_no_keys() {
+        let problem = json!({"title": "test"});
+        let opts = parse_problem_options(&problem);
+        assert!(opts.is_empty());
+    }
+
+    #[test]
+    fn parse_options_object_fallback_keys() {
+        // Uses "key" for option_id, "label" for text
+        let problem = json!({
+            "options": [{"key": "K1", "label": "Label1"}]
+        });
+        let opts = parse_problem_options(&problem);
+        assert_eq!(opts[0].option_id, "K1");
+        assert_eq!(opts[0].text, "Label1");
+    }
+
+    // ── parse_correct_answers ──────────────────────────────────
+
+    #[test]
+    fn parse_correct_answers_mixed_types() {
+        let problem = json!({
+            "answers": ["A", 42, true]
+        });
+        let answers = parse_correct_answers(&problem);
+        assert_eq!(answers, vec!["A", "42", "true"]);
+    }
+
+    #[test]
+    fn parse_correct_answers_empty() {
+        let problem = json!({"title": "no answers"});
+        let answers = parse_correct_answers(&problem);
+        assert!(answers.is_empty());
+    }
+
+    #[test]
+    fn parse_correct_answers_ignores_non_primitives() {
+        let problem = json!({
+            "answers": [{"complex": true}, "valid"]
+        });
+        let answers = parse_correct_answers(&problem);
+        assert_eq!(answers, vec!["valid"]);
+    }
+
+    // ── parse_blanks ───────────────────────────────────────────
+
+    #[test]
+    fn parse_blanks_multiple() {
+        let problem = json!({
+            "blanks": [
+                {"answers": ["hello", "hi"]},
+                {"answers": [42]},
+            ]
+        });
+        let blanks = parse_blanks(&problem);
+        assert_eq!(blanks.len(), 2);
+        assert_eq!(blanks[0].accepted_values, vec!["hello", "hi"]);
+        assert_eq!(blanks[1].accepted_values, vec!["42"]);
+    }
+
+    #[test]
+    fn parse_blanks_empty() {
+        let problem = json!({"title": "no blanks"});
+        let blanks = parse_blanks(&problem);
+        assert!(blanks.is_empty());
+    }
+
+    #[test]
+    fn parse_blanks_blank_without_answers() {
+        let problem = json!({
+            "blanks": [{"some_field": "value"}]
+        });
+        let blanks = parse_blanks(&problem);
+        assert_eq!(blanks.len(), 1);
+        assert!(blanks[0].accepted_values.is_empty());
+    }
+
+    // ── parse_limit ────────────────────────────────────────────
+
+    #[test]
+    fn parse_limit_normal() {
+        let problem = json!({"limit": 60});
+        assert_eq!(parse_limit(&problem), Some(60));
+    }
+
+    #[test]
+    fn parse_limit_unlimited() {
+        let problem = json!({"limit": -1});
+        assert_eq!(parse_limit(&problem), None);
+    }
+
+    #[test]
+    fn parse_limit_missing() {
+        let problem = json!({"title": "test"});
+        assert_eq!(parse_limit(&problem), None);
+    }
+
+    #[test]
+    fn parse_limit_zero() {
+        let problem = json!({"limit": 0});
+        assert_eq!(parse_limit(&problem), Some(0));
+    }
+
+    // ── YktApiPort::parse_api_ok ───────────────────────────────
+
+    #[test]
+    fn parse_api_ok_success() {
+        let resp = json!({"code": 0, "data": {"key": "value"}});
+        let result = YktApiPort::parse_api_ok(resp).unwrap();
+        assert_eq!(result, json!({"key": "value"}));
+    }
+
+    #[test]
+    fn parse_api_ok_error() {
+        let resp = json!({"code": 1001, "msg": "bad request"});
+        let result = YktApiPort::parse_api_ok(resp);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("1001"));
+        assert!(err_msg.contains("bad request"));
+    }
+
+    #[test]
+    fn parse_api_ok_missing_data() {
+        let resp = json!({"code": 0});
+        let result = YktApiPort::parse_api_ok(resp).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    // ── YktApiPort::extract_session_id ─────────────────────────
+
+    #[test]
+    fn extract_session_id_found() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "set-cookie",
+            "sessionid=abc123; Path=/; HttpOnly".parse().unwrap(),
+        );
+        let result = YktApiPort::extract_session_id(&headers);
+        assert_eq!(result, Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn extract_session_id_not_found() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("set-cookie", "other=value; Path=/".parse().unwrap());
+        let result = YktApiPort::extract_session_id(&headers);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_session_id_empty_headers() {
+        let headers = reqwest::header::HeaderMap::new();
+        let result = YktApiPort::extract_session_id(&headers);
+        assert!(result.is_none());
+    }
+}

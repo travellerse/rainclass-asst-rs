@@ -1093,4 +1093,228 @@ mod tests {
             .await
             .expect("stop monitor failed");
     }
+
+    #[tokio::test]
+    async fn save_config_should_persist_and_update_runtime() {
+        let ports = Arc::new(MockPorts::new(default_config()));
+        let app = CoreAppService::new(
+            CoreAppDeps {
+                api: ports.clone(),
+                config_store: ports.clone(),
+                session_store: ports.clone(),
+                notifier: ports.clone(),
+                update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+            },
+            default_config(),
+        );
+
+        let mut new_config = default_config();
+        new_config.monitor_interval_secs = 42;
+        new_config.auto_checkin_enabled = false;
+
+        app.handle_command(AppCommand::SaveConfig { config: new_config })
+            .await
+            .expect("save config failed");
+
+        let result = app
+            .handle_query(AppQuery::GetConfig)
+            .await
+            .expect("query config failed");
+        let AppQueryResult::Config(cfg) = result else {
+            panic!("expected config");
+        };
+        assert_eq!(cfg.monitor_interval_secs, 42);
+        assert!(!cfg.auto_checkin_enabled);
+
+        // Also verify storage was persisted
+        let stored = ports.config.lock().expect("config poisoned").clone();
+        assert_eq!(stored.monitor_interval_secs, 42);
+    }
+
+    #[tokio::test]
+    async fn logout_should_clear_session_and_stop_monitor() {
+        let ports = Arc::new(MockPorts::new(default_config()));
+        let app = CoreAppService::new(
+            CoreAppDeps {
+                api: ports.clone(),
+                config_store: ports.clone(),
+                session_store: ports.clone(),
+                notifier: ports.clone(),
+                update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+            },
+            default_config(),
+        );
+
+        // First login
+        app.handle_command(AppCommand::LoginByQr)
+            .await
+            .expect("login bootstrap failed");
+        app.handle_command(AppCommand::PollLogin {
+            scene_id: "scene-1".to_string(),
+        })
+        .await
+        .expect("poll login failed");
+
+        // Then logout
+        app.handle_command(AppCommand::Logout)
+            .await
+            .expect("logout failed");
+
+        let state = app
+            .handle_query(AppQuery::GetAppState)
+            .await
+            .expect("query failed");
+        let AppQueryResult::State(state) = state else {
+            panic!("expected state");
+        };
+        assert!(matches!(
+            state.auth_state,
+            crate::auth::AuthState::LoggedOut
+        ));
+        assert!(!state.monitor_running);
+
+        // Session should be cleared in storage
+        assert!(ports.session.lock().expect("session poisoned").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_recent_events_should_respect_limit() {
+        let ports = Arc::new(MockPorts::new(default_config()));
+        let app = CoreAppService::new(
+            CoreAppDeps {
+                api: ports.clone(),
+                config_store: ports.clone(),
+                session_store: ports.clone(),
+                notifier: ports.clone(),
+                update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+            },
+            default_config(),
+        );
+
+        // Query with limit 0 should return empty
+        let result = app
+            .handle_query(AppQuery::GetRecentEvents { limit: 0 })
+            .await
+            .expect("query events failed");
+        let AppQueryResult::Events(events) = result else {
+            panic!("expected events");
+        };
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_session_without_session_should_fail() {
+        let ports = Arc::new(MockPorts::new(default_config()));
+        // No session set
+        let app = CoreAppService::new(
+            CoreAppDeps {
+                api: ports.clone(),
+                config_store: ports.clone(),
+                session_store: ports.clone(),
+                notifier: ports.clone(),
+                update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+            },
+            default_config(),
+        );
+
+        let result = app.handle_command(AppCommand::RefreshSession).await;
+        assert!(matches!(result, Err(AppError::InvalidCommand(_))));
+    }
+
+    #[tokio::test]
+    async fn config_default_has_expected_values() {
+        let cfg = AppConfigDto::default();
+        assert_eq!(cfg.monitor_interval_secs, 5);
+        assert!(cfg.auto_checkin_enabled);
+        assert!(cfg.auto_answer_enabled);
+        assert!(!cfg.auto_answer_random_guess);
+        assert!(cfg.auto_danmu_enabled);
+        assert_eq!(cfg.danmu_threshold, 4);
+        assert_eq!(cfg.answer_delay_ms, 500);
+        assert_eq!(cfg.answer_delay_type, 1);
+        assert_eq!(cfg.answer_delay_custom_percent, 50);
+        assert!(cfg.notify_enabled);
+        assert!(cfg.webhook_url.is_empty());
+        assert!(cfg.check_update_on_startup);
+        assert_eq!(cfg.tenant, "Hetang");
+        assert!(cfg.auth_state_hint.is_none());
+    }
+
+    #[tokio::test]
+    async fn start_monitor_when_already_running_is_noop() {
+        let ports = Arc::new(MockPorts::new(default_config()));
+        let app = CoreAppService::new(
+            CoreAppDeps {
+                api: ports.clone(),
+                config_store: ports.clone(),
+                session_store: ports.clone(),
+                notifier: ports.clone(),
+                update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+            },
+            default_config(),
+        );
+
+        // Login first
+        app.handle_command(AppCommand::LoginByQr)
+            .await
+            .expect("login bootstrap failed");
+        app.handle_command(AppCommand::PollLogin {
+            scene_id: "scene-1".to_string(),
+        })
+        .await
+        .expect("poll login failed");
+
+        // Start monitor twice - second should be a no-op
+        app.handle_command(AppCommand::StartMonitor)
+            .await
+            .expect("start monitor failed");
+        app.handle_command(AppCommand::StartMonitor)
+            .await
+            .expect("second start monitor should succeed as no-op");
+
+        let state = app
+            .handle_query(AppQuery::GetAppState)
+            .await
+            .expect("query failed");
+        let AppQueryResult::State(state) = state else {
+            panic!("expected state");
+        };
+        assert!(state.monitor_running);
+
+        app.handle_command(AppCommand::StopMonitor)
+            .await
+            .expect("stop monitor failed");
+    }
+
+    #[tokio::test]
+    async fn check_update_no_update_should_not_emit_event() {
+        let ports = Arc::new(MockPorts::new(default_config()));
+        // update is None by default → no update available
+
+        let app = CoreAppService::new(
+            CoreAppDeps {
+                api: ports.clone(),
+                config_store: ports.clone(),
+                session_store: ports.clone(),
+                notifier: ports.clone(),
+                update_checker: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+            },
+            default_config(),
+        );
+
+        let mut events = app.subscribe_events();
+        app.handle_command(AppCommand::CheckUpdate)
+            .await
+            .expect("check update failed");
+
+        // Should time out since no event is emitted
+        let result = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
+        assert!(result.is_err(), "should not have received any event");
+    }
 }

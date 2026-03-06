@@ -24,3 +24,8 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "ti
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
 tracing.workspace = true
 url.workspace = true
+
+[dev-dependencies]
+mockall = "0.13"
+tempfile = "3"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
