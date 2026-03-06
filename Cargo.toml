@@ -4,6 +4,7 @@ members = [
 	"apps/rca-desktop",
 	"crates/rca-core",
 	"crates/rca-infra",
+	"xtask",
 ]
 resolver = "2"
 
