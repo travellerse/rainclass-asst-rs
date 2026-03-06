@@ -28,8 +28,6 @@ enum Task {
 struct FmtArgs {
     #[arg(long)]
     check: bool,
-    #[arg(long)]
-    locked: bool,
 }
 
 #[derive(Debug, Args)]
@@ -111,7 +109,7 @@ fn fmt(args: FmtArgs) -> Result<()> {
         fmt_args.push("--check");
     }
 
-    run_cargo(fmt_args, args.locked)
+    run_cargo(fmt_args, false)
 }
 
 fn clippy(args: ClippyArgs) -> Result<()> {
@@ -130,10 +128,7 @@ fn clippy(args: ClippyArgs) -> Result<()> {
 }
 
 fn lint(args: LintArgs) -> Result<()> {
-    fmt(FmtArgs {
-        check: args.check,
-        locked: args.locked,
-    })?;
+    fmt(FmtArgs { check: args.check })?;
     clippy(ClippyArgs {
         locked: args.locked,
     })

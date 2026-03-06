@@ -30,7 +30,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Format check
-        run: cargo xtask fmt --check --locked
+        run: cargo xtask fmt --check
 
       - name: Clippy
         run: cargo xtask clippy --locked
