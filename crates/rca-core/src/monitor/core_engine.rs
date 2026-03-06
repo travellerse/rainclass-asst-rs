@@ -40,24 +40,52 @@ impl CoreMonitorEngine {
         }
     }
 
-    fn default_answer_payload(problem: &Problem) -> Option<AnswerPayload> {
+    /// Resolve the best answer payload using extracted correct answers.
+    /// Falls back to heuristic (first option) when no correct answers are available.
+    fn resolve_answer_payload(problem: &Problem) -> Option<AnswerPayload> {
         match problem.problem_type {
             ProblemType::SingleChoice => {
-                problem.options.first().map(|option| AnswerPayload::Single {
-                    option_id: option.option_id.clone(),
-                })
+                // Prefer correct answer from slide data
+                if let Some(answer_id) = problem.correct_answers.first() {
+                    Some(AnswerPayload::Single {
+                        option_id: answer_id.clone(),
+                    })
+                } else {
+                    // Fallback: pick first option
+                    problem.options.first().map(|opt| AnswerPayload::Single {
+                        option_id: opt.option_id.clone(),
+                    })
+                }
             }
             ProblemType::MultipleChoice => {
-                problem
-                    .options
-                    .first()
-                    .map(|option| AnswerPayload::Multiple {
-                        option_ids: vec![option.option_id.clone()],
+                if !problem.correct_answers.is_empty() {
+                    Some(AnswerPayload::Multiple {
+                        option_ids: problem.correct_answers.clone(),
                     })
+                } else {
+                    // Fallback: pick first option
+                    problem.options.first().map(|opt| AnswerPayload::Multiple {
+                        option_ids: vec![opt.option_id.clone()],
+                    })
+                }
             }
-            ProblemType::FillBlank => Some(AnswerPayload::FillBlank {
-                text: String::new(),
-            }),
+            ProblemType::FillBlank => {
+                // Use blanks data: pick first accepted value of each blank,
+                // join with "," for multi-blank problems
+                if !problem.blanks.is_empty() {
+                    let text = problem
+                        .blanks
+                        .iter()
+                        .filter_map(|blank| blank.accepted_values.first().cloned())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    Some(AnswerPayload::FillBlank { text })
+                } else {
+                    Some(AnswerPayload::FillBlank {
+                        text: String::new(),
+                    })
+                }
+            }
             ProblemType::Unknown => None,
         }
     }
@@ -68,6 +96,7 @@ impl CoreMonitorEngine {
         lesson: &crate::domain::Lesson,
         answered_problems: &mut HashSet<u64>,
         checked_checkins: &mut HashSet<u64>,
+        danmu_tracker: &mut crate::monitor::DanmuTracker,
         event: (LessonWsEvent, &tokio::sync::broadcast::Sender<CoreEvent>),
         cfg: &MonitorConfig,
     ) {
@@ -83,8 +112,21 @@ impl CoreMonitorEngine {
 
                 if auto_answer_enabled
                     && answered_problems.insert(problem.problem_id.0.get())
-                    && let Some(payload) = Self::default_answer_payload(&problem)
+                    && let Some(payload) = Self::resolve_answer_payload(&problem)
                 {
+                    let delay = crate::monitor::calculate_wait_time(
+                        problem.limit_secs,
+                        &cfg.delay_strategy,
+                    );
+                    if delay > Duration::ZERO {
+                        tracing::info!(
+                            "等待 {:?} 后提交答案 (策略: {:?})",
+                            delay,
+                            cfg.delay_strategy
+                        );
+                        sleep(delay).await;
+                    }
+
                     match api
                         .submit_answer(session, lesson.lesson_id, problem.problem_id, payload)
                         .await
@@ -164,6 +206,30 @@ impl CoreMonitorEngine {
                     content,
                     lesson.lesson_id.0.get()
                 );
+
+                if cfg.auto_danmu_enabled
+                    && danmu_tracker.track_and_decide(&content, cfg.danmu_threshold, 60, 60)
+                {
+                    tracing::info!("Auto-replying to danmu: {:?}", content);
+                    let content_clone = content.clone();
+                    let session_clone = session.clone();
+                    let lesson_id = lesson.lesson_id;
+                    let api_clone = api.clone();
+                    let event_tx_clone = event.1.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(e) = api_clone
+                            .send_danmu(&session_clone, lesson_id, &content_clone)
+                            .await
+                        {
+                            let _ = event_tx_clone.send(CoreEvent::Error {
+                                code: "AUTO_DANMU_FAILED",
+                                message: e.to_string(),
+                            });
+                        }
+                    });
+                }
+
                 let _ = event.1.send(CoreEvent::DanmuPublished {
                     lesson_id: lesson.lesson_id,
                     user_name,
@@ -245,6 +311,7 @@ impl MonitorEngine for CoreMonitorEngine {
                 join_set.spawn(async move {
                     let mut answered_problems = HashSet::new();
                     let mut checked_checkins = HashSet::new();
+                    let mut danmu_tracker = crate::monitor::DanmuTracker::new();
 
                     loop {
                         if *stop_rx_lesson.borrow() {
@@ -278,8 +345,9 @@ impl MonitorEngine for CoreMonitorEngine {
                                     &api_for_lesson,
                                     &session_for_lesson,
                                     &lesson_clone,
-                                    &mut answered_problems,
+                                     &mut answered_problems,
                                     &mut checked_checkins,
+                                    &mut danmu_tracker,
                                     (crate::app::ports::LessonWsEvent::ProblemPublished { problem }, &event_tx_lesson),
                                     &cfg_for_lesson,
                                 ).await;
@@ -307,6 +375,7 @@ impl MonitorEngine for CoreMonitorEngine {
                                         &lesson_clone,
                                         &mut answered_problems,
                                         &mut checked_checkins,
+                                        &mut danmu_tracker,
                                         (event, &event_tx_lesson),
                                         &cfg_for_lesson,
                                     ).await;
