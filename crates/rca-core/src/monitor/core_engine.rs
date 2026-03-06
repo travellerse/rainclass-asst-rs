@@ -41,8 +41,9 @@ impl CoreMonitorEngine {
     }
 
     /// Resolve the best answer payload using extracted correct answers.
-    /// Falls back to heuristic (first option) when no correct answers are available.
-    fn resolve_answer_payload(problem: &Problem) -> Option<AnswerPayload> {
+    /// If `allow_random_guess` is true, falls back to heuristic (first option) when no correct answers are available.
+    /// Otherwise, returns None.
+    fn resolve_answer_payload(problem: &Problem, allow_random_guess: bool) -> Option<AnswerPayload> {
         match problem.problem_type {
             ProblemType::SingleChoice => {
                 // Prefer correct answer from slide data
@@ -50,11 +51,13 @@ impl CoreMonitorEngine {
                     Some(AnswerPayload::Single {
                         option_id: answer_id.clone(),
                     })
-                } else {
+                } else if allow_random_guess {
                     // Fallback: pick first option
                     problem.options.first().map(|opt| AnswerPayload::Single {
                         option_id: opt.option_id.clone(),
                     })
+                } else {
+                    None
                 }
             }
             ProblemType::MultipleChoice => {
@@ -62,11 +65,13 @@ impl CoreMonitorEngine {
                     Some(AnswerPayload::Multiple {
                         option_ids: problem.correct_answers.clone(),
                     })
-                } else {
+                } else if allow_random_guess {
                     // Fallback: pick first option
                     problem.options.first().map(|opt| AnswerPayload::Multiple {
                         option_ids: vec![opt.option_id.clone()],
                     })
+                } else {
+                    None
                 }
             }
             ProblemType::FillBlank => {
@@ -80,10 +85,12 @@ impl CoreMonitorEngine {
                         .collect::<Vec<_>>()
                         .join(",");
                     Some(AnswerPayload::FillBlank { text })
-                } else {
+                } else if allow_random_guess {
                     Some(AnswerPayload::FillBlank {
                         text: String::new(),
                     })
+                } else {
+                    None
                 }
             }
             ProblemType::Unknown => None,
@@ -112,38 +119,48 @@ impl CoreMonitorEngine {
 
                 if auto_answer_enabled
                     && answered_problems.insert(problem.problem_id.0.get())
-                    && let Some(payload) = Self::resolve_answer_payload(&problem)
+                    && let Some(payload) = Self::resolve_answer_payload(&problem, cfg.auto_answer_random_guess)
                 {
                     let delay = crate::monitor::calculate_wait_time(
                         problem.limit_secs,
                         &cfg.delay_strategy,
                     );
-                    if delay > Duration::ZERO {
-                        tracing::info!(
-                            "等待 {:?} 后提交答案 (策略: {:?})",
-                            delay,
-                            cfg.delay_strategy
-                        );
-                        sleep(delay).await;
-                    }
 
-                    match api
-                        .submit_answer(session, lesson.lesson_id, problem.problem_id, payload)
-                        .await
-                    {
-                        Ok(()) => {
-                            let _ = event.1.send(CoreEvent::AutoAnswerSubmitted {
-                                lesson_id: lesson.lesson_id,
-                                problem_id: problem.problem_id,
-                            });
+                    let api_clone = api.clone();
+                    let session_clone = session.clone();
+                    let lesson_id = lesson.lesson_id;
+                    let problem_id = problem.problem_id;
+                    let sender = event.1.clone();
+                    let delay_strategy = cfg.delay_strategy;
+
+                    tokio::spawn(async move {
+                        if delay > Duration::ZERO {
+                            tracing::info!(
+                                "等待 {:?} 后提交答案 (策略: {:?})",
+                                delay,
+                                delay_strategy
+                            );
+                            sleep(delay).await;
                         }
-                        Err(err) => {
-                            let _ = event.1.send(CoreEvent::Error {
-                                code: "AUTO_ANSWER_FAILED",
-                                message: err.to_string(),
-                            });
+
+                        match api_clone
+                            .submit_answer(&session_clone, lesson_id, problem_id, payload)
+                            .await
+                        {
+                            Ok(()) => {
+                                let _ = sender.send(CoreEvent::AutoAnswerSubmitted {
+                                    lesson_id,
+                                    problem_id,
+                                });
+                            }
+                            Err(err) => {
+                                let _ = sender.send(CoreEvent::Error {
+                                    code: "AUTO_ANSWER_FAILED",
+                                    message: err.to_string(),
+                                });
+                            }
                         }
-                    }
+                    });
                 }
             }
             LessonWsEvent::CheckinOpened { checkin_id } => {

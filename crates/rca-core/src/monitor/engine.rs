@@ -14,6 +14,7 @@ pub struct MonitorConfig {
     pub ws_reconnect_backoff_max: Duration,
     pub max_parallel_lessons: usize,
     pub auto_answer_enabled: bool,
+    pub auto_answer_random_guess: bool,
     pub auto_checkin_enabled: bool,
     pub auto_danmu_enabled: bool,
     pub danmu_threshold: usize,
