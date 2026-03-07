@@ -28,6 +28,13 @@ Rust 重构版本的雨课堂助手，采用分层架构：
 
 ## 快速开始
 
+Linux 开发环境如果需要构建 `rca-desktop`，请先安装系统依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y libfontconfig-dev
+```
+
 1. 开发检查：
 
     ```bash

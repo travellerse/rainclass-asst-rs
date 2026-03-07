@@ -24,9 +24,9 @@ impl Notifier for DesktopNotifier {
             .body(&msg.body)
             .appname("RainClassroomAssistant");
 
-        match notification.show_async().await {
-            Ok(_) => Ok(()),
-            Err(e) => Err(NotifyError::SendFailed(e.to_string())),
-        }
+        notification
+            .show()
+            .map(|_| ())
+            .map_err(|error| NotifyError::SendFailed(error.to_string()))
     }
 }
