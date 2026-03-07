@@ -119,6 +119,8 @@ fn clippy(args: ClippyArgs) -> Result<()> {
             "--workspace",
             "--all-targets",
             "--all-features",
+            "--exclude",
+            "xtask",
             "--",
             "-D",
             "warnings",
@@ -144,7 +146,16 @@ fn test(args: TestArgs) -> Result<()> {
         return Ok(());
     }
 
-    run_cargo(["test", "--workspace", "--all-features"], args.locked)
+    run_cargo(
+        [
+            "test",
+            "--workspace",
+            "--all-features",
+            "--exclude",
+            "xtask",
+        ],
+        args.locked,
+    )
 }
 
 fn build(args: BuildArgs) -> Result<()> {
@@ -153,6 +164,8 @@ fn build(args: BuildArgs) -> Result<()> {
         cargo_args.push(OsString::from("--release"));
     }
     cargo_args.push(OsString::from("--workspace"));
+    cargo_args.push(OsString::from("--exclude"));
+    cargo_args.push(OsString::from("xtask"));
     run_cargo_os(cargo_args, args.locked)
 }
 
@@ -188,7 +201,14 @@ fn coverage(args: CoverageArgs) -> Result<()> {
     }
 
     run_cargo(
-        ["llvm-cov", "--workspace", "--all-features", "--html"],
+        [
+            "llvm-cov",
+            "--workspace",
+            "--all-features",
+            "--exclude",
+            "xtask",
+            "--html",
+        ],
         args.locked,
     )
 }
