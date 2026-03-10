@@ -69,7 +69,8 @@ enum QrSceneState {
 impl YktApiPort {
     pub fn new(config: YktApiPortConfig) -> Result<Self, ApiError> {
         let user_agent =
-            "Mozilla/5.0 (X11; Linux x86_64) RainClassroomAssistant-Rust/0.1".to_string();
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0"
+                .to_string();
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.timeout_secs.max(5)))
             .build()
