@@ -41,6 +41,11 @@ tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url.workspace = true
 rust-i18n.workspace = true
 async-openai = { workspace = true, features = ["chat-completion"] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
+] }
 
 [dev-dependencies]
 mockall = "0.14"

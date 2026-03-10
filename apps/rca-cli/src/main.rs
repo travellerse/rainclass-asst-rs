@@ -246,6 +246,8 @@ async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let cli = Cli::parse();
     let default_level = match cli.verbose {
         0 => "info",
