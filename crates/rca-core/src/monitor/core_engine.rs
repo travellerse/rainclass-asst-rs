@@ -15,6 +15,7 @@ use crate::monitor::{
 
 pub struct CoreMonitorEngine {
     api: Arc<dyn ApiPort>,
+    llm: Arc<dyn crate::domain::LlmService>,
     state: Arc<Mutex<EngineState>>,
 }
 
@@ -35,10 +36,11 @@ struct LessonState {
 }
 
 impl CoreMonitorEngine {
-    pub fn new(api: Arc<dyn ApiPort>) -> Self {
+    pub fn new(api: Arc<dyn ApiPort>, llm: Arc<dyn crate::domain::LlmService>) -> Self {
         let (event_tx, _) = tokio::sync::broadcast::channel(128);
         Self {
             api,
+            llm,
             state: Arc::new(Mutex::new(EngineState {
                 event_tx,
                 runtime: None,
@@ -108,6 +110,7 @@ impl CoreMonitorEngine {
 
     async fn process_lesson_ws_event(
         api: &Arc<dyn ApiPort>,
+        llm: &Arc<dyn crate::domain::LlmService>,
         session: &AuthSession,
         lesson: &crate::domain::Lesson,
         state: &mut LessonState,
@@ -124,10 +127,7 @@ impl CoreMonitorEngine {
                     problem: problem.clone(),
                 });
 
-                if auto_answer_enabled
-                    && state.answered_problems.insert(problem.problem_id.0.get())
-                    && let Some(payload) =
-                        Self::resolve_answer_payload(&problem, cfg.auto_answer_random_guess)
+                if auto_answer_enabled && state.answered_problems.insert(problem.problem_id.0.get())
                 {
                     let delay = crate::monitor::calculate_wait_time(
                         problem.limit_secs,
@@ -135,11 +135,15 @@ impl CoreMonitorEngine {
                     );
 
                     let api_clone = api.clone();
+                    let llm_clone = llm.clone();
                     let session_clone = session.clone();
                     let lesson_id = lesson.lesson_id;
                     let problem_id = problem.problem_id;
                     let sender = event.1.clone();
                     let delay_strategy = cfg.delay_strategy;
+                    let fallback_guess = cfg.auto_answer_random_guess;
+                    let problem_clone = problem.clone();
+                    let llm_cfg = cfg.llm_config.clone();
 
                     tokio::spawn(async move {
                         if delay > Duration::ZERO {
@@ -151,22 +155,47 @@ impl CoreMonitorEngine {
                             sleep(delay).await;
                         }
 
-                        match api_clone
-                            .submit_answer(&session_clone, lesson_id, problem_id, payload)
-                            .await
+                        let mut final_payload = None;
+                        if let Some(l_cfg) = &llm_cfg
+                            && l_cfg.enabled
                         {
-                            Ok(()) => {
-                                let _ = sender.send(CoreEvent::AutoAnswerSubmitted {
-                                    lesson_id,
-                                    problem_id,
-                                });
+                            tracing::info!("尝试使用 LLM 解答题目 ({})", problem_clone.title);
+                            match llm_clone.answer_problem(&problem_clone, l_cfg).await {
+                                Ok(p) => final_payload = Some(p),
+                                Err(e) => {
+                                    tracing::error!("LLM 答题失败: {}，回退到启发式规则", e);
+                                }
                             }
-                            Err(err) => {
-                                let _ = sender.send(CoreEvent::Error {
-                                    code: "AUTO_ANSWER_FAILED",
-                                    message: err.to_string(),
-                                });
+                        }
+
+                        if final_payload.is_none() {
+                            final_payload =
+                                Self::resolve_answer_payload(&problem_clone, fallback_guess);
+                        }
+
+                        if let Some(payload) = final_payload {
+                            match api_clone
+                                .submit_answer(&session_clone, lesson_id, problem_id, payload)
+                                .await
+                            {
+                                Ok(()) => {
+                                    let _ = sender.send(CoreEvent::AutoAnswerSubmitted {
+                                        lesson_id,
+                                        problem_id,
+                                    });
+                                }
+                                Err(err) => {
+                                    let _ = sender.send(CoreEvent::Error {
+                                        code: "AUTO_ANSWER_FAILED",
+                                        message: err.to_string(),
+                                    });
+                                }
                             }
+                        } else {
+                            tracing::info!(
+                                "题目 {} 没有合适的答案可供提交，已跳过",
+                                problem_clone.title
+                            );
                         }
                     });
                 }
@@ -330,6 +359,7 @@ impl MonitorEngine for CoreMonitorEngine {
         let event_tx = guard.event_tx.clone();
 
         let api = self.api.clone();
+        let llm = self.llm.clone();
         let (stop_tx, mut stop_rx) = watch::channel(false);
 
         let join_handle = tokio::spawn(async move {
@@ -362,6 +392,7 @@ impl MonitorEngine for CoreMonitorEngine {
             let mut join_set = JoinSet::new();
             for lesson in lessons {
                 let api_for_lesson = api.clone();
+                let llm_for_lesson = llm.clone();
                 let event_tx_lesson = event_tx.clone();
                 let mut stop_rx_lesson = stop_rx.clone();
                 let lesson_clone = lesson.clone();
@@ -405,6 +436,7 @@ impl MonitorEngine for CoreMonitorEngine {
                             for problem in history_problems {
                                 Self::process_lesson_ws_event(
                                     &api_for_lesson,
+                                    &llm_for_lesson,
                                     &session_for_lesson,
                                     &lesson_clone,
                                     &mut state,
@@ -431,6 +463,7 @@ impl MonitorEngine for CoreMonitorEngine {
                                     };
                                     Self::process_lesson_ws_event(
                                         &api_for_lesson,
+                                        &llm_for_lesson,
                                         &session_for_lesson,
                                         &lesson_clone,
                                         &mut state,

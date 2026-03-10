@@ -155,6 +155,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Some(ui) => ui,
                 None => return,
             };
+            let llm_config = controller
+                .runtime
+                .block_on(controller.get_config())
+                .ok()
+                .and_then(|r| {
+                    if let AppQueryResult::Config(c) = r {
+                        c.llm_config
+                    } else {
+                        None
+                    }
+                });
+
             let config = AppConfigDto {
                 monitor_interval_secs: ui.get_setting_monitor_interval().max(1) as u64,
                 auto_checkin_enabled: ui.get_setting_auto_checkin(),
@@ -170,6 +182,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 check_update_on_startup: ui.get_setting_check_update_on_startup(),
                 tenant: ui.get_setting_active_tenant().to_string(),
                 auth_state_hint: None,
+                llm_config,
             };
             spawn_command(
                 controller.clone(),

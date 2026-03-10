@@ -60,4 +60,5 @@ pub enum AnswerSource {
     Heuristic,
     RuleBased,
     UserPreset,
+    Llm,
 }

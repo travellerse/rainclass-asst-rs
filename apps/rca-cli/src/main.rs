@@ -220,7 +220,13 @@ async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
             timeout_secs: 15,
         })?);
 
-    let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
+    let llm_service: Arc<dyn rca_core::domain::LlmService> =
+        Arc::new(rca_infra::llm::OpenAiLlmService::new());
+
+    let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(
+        api_port.clone(),
+        llm_service.clone(),
+    ));
 
     let app = Arc::new(CoreAppService::new(
         CoreAppDeps {
@@ -229,6 +235,7 @@ async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
             session_store: Arc::new(CoreSessionStoreAdapter::new(session_repo, credential_store)),
             notifier: Arc::new(CoreNotifierAdapter::new(notifier)),
             update_checker: Arc::new(CoreUpdateCheckerAdapter::new(update_checker)),
+            llm: llm_service,
             monitor_engine: monitor,
         },
         default_config(),

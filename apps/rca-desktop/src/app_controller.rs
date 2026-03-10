@@ -88,7 +88,13 @@ impl AppController {
             update_checker,
         ));
 
-        let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
+        let llm_service: Arc<dyn rca_core::domain::LlmService> =
+            Arc::new(rca_infra::llm::OpenAiLlmService::new());
+
+        let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(
+            api_port.clone(),
+            llm_service.clone(),
+        ));
 
         let app = {
             let _guard = runtime.enter();
@@ -99,6 +105,7 @@ impl AppController {
                     session_store: session_port,
                     notifier: notify_port,
                     update_checker: update_port,
+                    llm: llm_service,
                     monitor_engine: monitor,
                 },
                 Self::default_config(),

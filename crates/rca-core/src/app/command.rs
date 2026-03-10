@@ -1,4 +1,5 @@
 use crate::auth::AuthState;
+use crate::domain::LlmConfig;
 
 #[derive(Debug, Clone)]
 pub enum AppCommand {
@@ -43,6 +44,7 @@ pub struct AppConfigDto {
     pub check_update_on_startup: bool,
     pub tenant: String,
     pub auth_state_hint: Option<AuthState>,
+    pub llm_config: Option<LlmConfig>,
 }
 
 impl Default for AppConfigDto {
@@ -62,6 +64,7 @@ impl Default for AppConfigDto {
             check_update_on_startup: true,
             tenant: "Hetang".to_string(),
             auth_state_hint: None,
+            llm_config: Some(LlmConfig::default()),
         }
     }
 }

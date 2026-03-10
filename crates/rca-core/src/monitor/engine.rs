@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use std::time::Duration;
 
 use crate::auth::AuthSession;
-use crate::domain::{CheckinId, Lesson, LessonId, Problem, ProblemId};
+use crate::domain::{CheckinId, Lesson, LessonId, LlmConfig, Problem, ProblemId};
 use crate::monitor::MonitorError;
 use crate::monitor::delay::DelayStrategy;
 
@@ -19,6 +19,7 @@ pub struct MonitorConfig {
     pub auto_danmu_enabled: bool,
     pub danmu_threshold: usize,
     pub delay_strategy: DelayStrategy,
+    pub llm_config: Option<LlmConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

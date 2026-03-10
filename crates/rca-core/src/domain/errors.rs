@@ -15,4 +15,7 @@ pub enum DomainError {
 
     #[error("invalid value: {0}")]
     InvalidValue(String),
+
+    #[error("llm operation failed: {0}")]
+    LlmFailed(String),
 }

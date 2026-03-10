@@ -19,6 +19,7 @@ pub struct AppConfig {
     pub webhook_url: String,
     pub check_update_on_startup: bool,
     pub active_tenant: TenantKind,
+    pub llm_config: Option<rca_core::domain::LlmConfig>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -46,6 +47,7 @@ impl Default for AppConfig {
             webhook_url: String::new(),
             check_update_on_startup: true,
             active_tenant: TenantKind::default(),
+            llm_config: None,
         }
     }
 }
@@ -76,6 +78,7 @@ mod tests {
             webhook_url: "https://hook.example.com".to_string(),
             check_update_on_startup: false,
             active_tenant: TenantKind::Rain,
+            llm_config: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();

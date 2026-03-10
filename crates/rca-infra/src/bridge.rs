@@ -96,6 +96,7 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
                 TenantKind::YellowRiver => "YellowRiver".to_string(),
             },
             auth_state_hint: None,
+            llm_config: cfg.llm_config.clone(),
         })
     }
 
@@ -120,6 +121,7 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
                 "YellowRiver" => TenantKind::YellowRiver,
                 _ => TenantKind::Hetang,
             },
+            llm_config: config.llm_config.clone(),
         };
         self.inner.save(&cfg).await.map_err(StoragePortError::save)
     }

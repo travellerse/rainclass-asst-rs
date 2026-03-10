@@ -23,6 +23,7 @@ pub struct CoreAppDeps {
     pub session_store: Arc<dyn SessionStorePort>,
     pub notifier: Arc<dyn NotifierPort>,
     pub update_checker: Arc<dyn UpdateCheckerPort>,
+    pub llm: Arc<dyn crate::domain::LlmService>,
     pub monitor_engine: Arc<dyn crate::monitor::MonitorEngine>,
 }
 
@@ -266,6 +267,7 @@ impl CoreAppService {
                 config.answer_delay_type,
                 config.answer_delay_custom_percent,
             ),
+            llm_config: config.llm_config.clone(),
         };
 
         if let Err(e) = self.deps.monitor_engine.start(session, monitor_cfg).await {
@@ -578,6 +580,19 @@ mod tests {
     }
 
     #[async_trait]
+    impl crate::domain::LlmService for MockPorts {
+        async fn answer_problem(
+            &self,
+            _problem: &Problem,
+            _config: &crate::domain::LlmConfig,
+        ) -> Result<AnswerPayload, crate::domain::DomainError> {
+            Ok(AnswerPayload::Single {
+                option_id: "A".to_string(),
+            })
+        }
+    }
+
+    #[async_trait]
     impl ApiPort for MockPorts {
         async fn get_on_lessons(
             &self,
@@ -765,7 +780,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -810,7 +829,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -853,6 +876,7 @@ mod tests {
             auth_state_hint: Some(crate::auth::AuthState::Failed {
                 reason: "loaded".to_string(),
             }),
+            llm_config: Some(crate::domain::LlmConfig::default()),
         };
 
         let app = CoreAppService::new(
@@ -862,7 +886,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -907,7 +935,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -942,7 +974,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -970,7 +1006,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -995,7 +1035,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1019,7 +1063,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1108,7 +1156,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             config,
         );
@@ -1161,7 +1213,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1199,7 +1255,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1246,7 +1306,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1273,7 +1337,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1311,7 +1379,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
@@ -1360,7 +1432,11 @@ mod tests {
                 session_store: ports.clone(),
                 notifier: ports.clone(),
                 update_checker: ports.clone(),
-                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+                llm: ports.clone(),
+                monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(
+                    ports.clone(),
+                    ports.clone(),
+                )),
             },
             default_config(),
         );
