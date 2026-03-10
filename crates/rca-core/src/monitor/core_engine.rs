@@ -276,6 +276,9 @@ impl CoreMonitorEngine {
                     message,
                 });
             }
+            LessonWsEvent::Unknown { raw_type } => {
+                tracing::debug!("Ignored unknown WS op: {}", raw_type);
+            }
         }
     }
 }

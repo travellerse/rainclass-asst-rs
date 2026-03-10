@@ -1276,9 +1276,7 @@ impl ApiPort for YktApiPort {
                         }
                     }
                     Ok(WsEventDto::LessonEnded { .. }) => LessonWsEvent::LessonEnded,
-                    Ok(WsEventDto::Unknown { raw_type, .. }) => LessonWsEvent::Warning {
-                        message: format!("unknown ws op: {raw_type}"),
-                    },
+                    Ok(WsEventDto::Unknown { raw_type, .. }) => LessonWsEvent::Unknown { raw_type },
                     Err(err) => LessonWsEvent::Warning {
                         message: format!("ws stream error: {err}"),
                     },

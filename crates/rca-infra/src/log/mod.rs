@@ -12,8 +12,15 @@ pub fn init_logger(log_dir: PathBuf, default_level: &str) -> Vec<WorkerGuard> {
     std::fs::create_dir_all(&log_dir).unwrap_or_default();
 
     // Standard console env filter
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
+    // Base env filter. By default, third-party libraries (hyper, h2, rustls, etc) are too noisy at debug/trace.
+    // So if the user doesn't provide RUST_LOG, we default to info *globally*, but allow our own app
+    // to use the requested `default_level` (which might be trace or debug).
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new(format!(
+            "info,rca_core={},rca_infra={},rca_cli={},rca_desktop={}",
+            default_level, default_level, default_level, default_level
+        ))
+    });
 
     // Console layer
     let console_layer = fmt::layer()
@@ -108,9 +115,12 @@ pub fn init_logger(log_dir: PathBuf, default_level: &str) -> Vec<WorkerGuard> {
         .with_target(true)
         .with_thread_ids(true)
         .with_line_number(true)
-        .with_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level)),
-        );
+        .with_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new(format!(
+                "info,rca_core={},rca_infra={},rca_cli={},rca_desktop={}",
+                default_level, default_level, default_level, default_level
+            ))
+        }));
 
     let subscriber = Registry::default()
         .with(console_layer)

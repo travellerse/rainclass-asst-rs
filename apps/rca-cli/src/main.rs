@@ -352,7 +352,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         if let Some(event) = maybe_event {
                             match &event {
                                 rca_core::app::AppEvent::StateChanged(state) => {
-                                    tracing::debug!("App state synchronized: {:?}", state);
                                     if let Some(err) = state.last_error.as_deref() {
                                         tracing::error!("Core Engine Error: {}", err);
                                     }

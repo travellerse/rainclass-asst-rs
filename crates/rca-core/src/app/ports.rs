@@ -28,6 +28,9 @@ pub enum LessonWsEvent {
     Warning {
         message: String,
     },
+    Unknown {
+        raw_type: String,
+    },
 }
 
 #[derive(Debug, Clone)]
