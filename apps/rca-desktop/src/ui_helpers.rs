@@ -107,6 +107,25 @@ pub fn format_core_event(event: &CoreEvent) -> (&'static str, String) {
                 presentation_id, lesson_id
             ),
         ),
+        CoreEvent::SlideNavigated {
+            lesson_id,
+            presentation_id: _,
+            slide_id,
+            slide_index,
+        } => (
+            "info",
+            format!(
+                "切换幻灯片: 页面 {} (id: {}) (课程 {:?})",
+                slide_index, slide_id, lesson_id
+            ),
+        ),
+        CoreEvent::ProblemUnlocked {
+            lesson_id,
+            problem_id,
+        } => (
+            "warning",
+            format!("题目已解锁: {} (课程 {:?})", problem_id.0.get(), lesson_id),
+        ),
         CoreEvent::Warning { code, message } => ("warning", format!("[{code}] {message}")),
         CoreEvent::Error { code, message } => ("error", format!("[{code}] {message}")),
     }

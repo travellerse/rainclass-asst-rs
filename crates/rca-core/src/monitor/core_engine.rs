@@ -213,6 +213,36 @@ impl CoreMonitorEngine {
                     presentation_id,
                 });
             }
+            LessonWsEvent::SlideNavigated {
+                presentation_id,
+                slide_id,
+                slide_index,
+            } => {
+                tracing::info!(
+                    "Slide Navigated: presentation_id={} slide_index={} slide_id={} lesson_id={}",
+                    presentation_id,
+                    slide_index,
+                    slide_id,
+                    lesson.lesson_id.0.get()
+                );
+                let _ = event.1.send(CoreEvent::SlideNavigated {
+                    lesson_id: lesson.lesson_id,
+                    presentation_id,
+                    slide_id,
+                    slide_index,
+                });
+            }
+            LessonWsEvent::ProblemUnlocked { problem_id } => {
+                tracing::info!(
+                    "Problem Unlocked: problem_id={} lesson_id={}",
+                    problem_id.0.get(),
+                    lesson.lesson_id.0.get()
+                );
+                let _ = event.1.send(CoreEvent::ProblemUnlocked {
+                    lesson_id: lesson.lesson_id,
+                    problem_id,
+                });
+            }
             LessonWsEvent::CallPaused { target_name } => {
                 tracing::info!(
                     "Roll-call initiated: target={} lesson_id={}",

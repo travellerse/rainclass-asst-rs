@@ -53,12 +53,28 @@ pub struct PresentationUpdatedDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SlideNavigatedDto {
+    pub lesson_id: u64,
+    pub presentation_id: u64,
+    pub slide_id: u64,
+    pub slide_index: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProblemUnlockedDto {
+    pub lesson_id: u64,
+    pub problem_id: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WsEventDto {
     ProblemPublished(ProblemDto),
     CheckinOpened(CheckinDto),
     DanmuPublished(DanmuDto),
     CallPaused(CallPausedDto),
     PresentationUpdated(PresentationUpdatedDto),
+    SlideNavigated(SlideNavigatedDto),
+    ProblemUnlocked(ProblemUnlockedDto),
     LessonEnded {
         lesson_id: u64,
     },

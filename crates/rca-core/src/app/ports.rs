@@ -25,6 +25,14 @@ pub enum LessonWsEvent {
     PresentationUpdated {
         presentation_id: u64,
     },
+    SlideNavigated {
+        presentation_id: u64,
+        slide_id: u64,
+        slide_index: u64,
+    },
+    ProblemUnlocked {
+        problem_id: ProblemId,
+    },
     Warning {
         message: String,
     },

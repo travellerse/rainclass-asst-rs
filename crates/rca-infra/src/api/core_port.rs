@@ -387,14 +387,64 @@ impl RainClassroomWs for YktApiPort {
                 let op = value.get("op").and_then(Value::as_str).unwrap_or("unknown");
 
                 let mapped = match op {
+                    "showpresentation" => {
+                        let pres_id = value
+                            .get("presentation")
+                            .and_then(Value::as_str)
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+                        if pres_id > 0 {
+                            WsEventDto::PresentationUpdated(crate::api::PresentationUpdatedDto {
+                                lesson_id,
+                                presentation_id: pres_id,
+                            })
+                        } else {
+                            WsEventDto::Unknown {
+                                raw_type: op.to_string(),
+                                raw_payload: text.clone(),
+                            }
+                        }
+                    }
+                    "slidenav" => {
+                        if let Some(slide) = value.get("slide") {
+                            let pres_id = slide
+                                .get("pres")
+                                .and_then(Value::as_str)
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
+                            let slide_id = slide
+                                .get("sid")
+                                .and_then(Value::as_str)
+                                .and_then(|s| s.parse::<u64>().ok())
+                                .unwrap_or(0);
+                            let slide_index = slide.get("si").and_then(Value::as_u64).unwrap_or(0);
+
+                            WsEventDto::SlideNavigated(crate::api::SlideNavigatedDto {
+                                lesson_id,
+                                presentation_id: pres_id,
+                                slide_id,
+                                slide_index,
+                            })
+                        } else {
+                            WsEventDto::Unknown {
+                                raw_type: op.to_string(),
+                                raw_payload: text.clone(),
+                            }
+                        }
+                    }
                     "unlockproblem" => {
-                        if let Some(problem) = value.get("problem") {
-                            Self::map_ws_problem(problem, lesson_id).unwrap_or(
-                                WsEventDto::Unknown {
-                                    raw_type: op.to_string(),
-                                    raw_payload: text.clone(),
-                                },
-                            )
+                        let prob_id = value
+                            .get("problem")
+                            .and_then(|p| p.get("prob"))
+                            .and_then(Value::as_str)
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
+
+                        if prob_id > 0 {
+                            WsEventDto::ProblemUnlocked(crate::api::ProblemUnlockedDto {
+                                lesson_id,
+                                problem_id: prob_id,
+                            })
                         } else {
                             WsEventDto::Unknown {
                                 raw_type: op.to_string(),
@@ -1273,6 +1323,20 @@ impl ApiPort for YktApiPort {
                     Ok(WsEventDto::PresentationUpdated(pres)) => {
                         LessonWsEvent::PresentationUpdated {
                             presentation_id: pres.presentation_id,
+                        }
+                    }
+                    Ok(WsEventDto::SlideNavigated(nav)) => LessonWsEvent::SlideNavigated {
+                        presentation_id: nav.presentation_id,
+                        slide_id: nav.slide_id,
+                        slide_index: nav.slide_index,
+                    },
+                    Ok(WsEventDto::ProblemUnlocked(prob)) => {
+                        if let Some(problem_id) = NonZeroU64::new(prob.problem_id).map(ProblemId) {
+                            LessonWsEvent::ProblemUnlocked { problem_id }
+                        } else {
+                            LessonWsEvent::Warning {
+                                message: "ws unlock problem id is zero".to_string(),
+                            }
                         }
                     }
                     Ok(WsEventDto::LessonEnded { .. }) => LessonWsEvent::LessonEnded,

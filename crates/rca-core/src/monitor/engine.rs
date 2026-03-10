@@ -68,6 +68,16 @@ pub enum CoreEvent {
         lesson_id: LessonId,
         presentation_id: u64,
     },
+    SlideNavigated {
+        lesson_id: LessonId,
+        presentation_id: u64,
+        slide_id: u64,
+        slide_index: u64,
+    },
+    ProblemUnlocked {
+        lesson_id: LessonId,
+        problem_id: ProblemId,
+    },
     Warning {
         code: &'static str,
         message: String,
