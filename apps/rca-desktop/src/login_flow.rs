@@ -67,6 +67,10 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "EventLoop must be created on the main thread on macOS"
+    )]
     fn login_flow_no_panic() {
         // bootstrap controller (real initialization but won't perform network in test)
         let controller = Arc::new(AppController::bootstrap().unwrap());
