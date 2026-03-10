@@ -30,8 +30,8 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 
-    #[arg(short, long, global = true)]
-    verbose: bool,
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    verbose: u8,
 }
 
 #[derive(Debug, Subcommand)]
@@ -214,7 +214,11 @@ async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let default_level = if cli.verbose { "debug" } else { "info" };
+    let default_level = match cli.verbose {
+        0 => "info",
+        1 => "debug",
+        _ => "trace",
+    };
 
     let log_dir = match rca_infra::storage::AppPaths::detect() {
         Ok(paths) => paths.log_dir,
