@@ -43,3 +43,25 @@ impl Notifier for LoggingNotifier {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notify::NotifyLevel;
+    use chrono::Utc;
+
+    #[tokio::test]
+    async fn test_logging_notifier_success() {
+        let notifier = LoggingNotifier;
+        let notification = Notification {
+            id: "test".to_string(),
+            title: "Title".to_string(),
+            body: "Body".to_string(),
+            level: NotifyLevel::Info,
+            created_at: Utc::now(),
+        };
+
+        let result = notifier.notify(notification).await;
+        assert!(result.is_ok());
+    }
+}

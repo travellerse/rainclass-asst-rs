@@ -207,7 +207,6 @@ fn coverage(args: CoverageArgs) -> Result<()> {
             "--all-features",
             "--exclude",
             "xtask",
-            "--html",
         ],
         args.locked,
     )

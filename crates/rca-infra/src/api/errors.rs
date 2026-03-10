@@ -82,3 +82,76 @@ impl ApiError {
         Self::WebSocketConnect(detail.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_api_error_constructors() {
+        let err = ApiError::invalid_header("Authorization", "missing");
+        match err {
+            ApiError::InvalidHeader { header, detail } => {
+                assert_eq!(header, "Authorization");
+                assert_eq!(detail, "missing");
+            }
+            _ => panic!("Expected ApiError::InvalidHeader"),
+        }
+
+        let err = ApiError::protocol("parsing", "unexpected char");
+        match err {
+            ApiError::ProtocolChanged { context, detail } => {
+                assert_eq!(context, "parsing");
+                assert_eq!(detail, "unexpected char");
+            }
+            _ => panic!("Expected ApiError::ProtocolChanged"),
+        }
+
+        let err = ApiError::ws_request("failed to send");
+        match err {
+            ApiError::WebSocketRequest(detail) => {
+                assert_eq!(detail, "failed to send");
+            }
+            _ => panic!("Expected ApiError::WebSocketRequest"),
+        }
+
+        let err = ApiError::ws_send("closed");
+        match err {
+            ApiError::WebSocketSend(detail) => {
+                assert_eq!(detail, "closed");
+            }
+            _ => panic!("Expected ApiError::WebSocketSend"),
+        }
+
+        let err = ApiError::ws_receive("corrupted");
+        match err {
+            ApiError::WebSocketReceive(detail) => {
+                assert_eq!(detail, "corrupted");
+            }
+            _ => panic!("Expected ApiError::WebSocketReceive"),
+        }
+
+        let err = ApiError::ws_connect("timeout");
+        match err {
+            ApiError::WebSocketConnect(detail) => {
+                assert_eq!(detail, "timeout");
+            }
+            _ => panic!("Expected ApiError::WebSocketConnect"),
+        }
+    }
+
+    #[test]
+    fn test_api_error_display() {
+        let err = ApiError::Unauthorized;
+        assert_eq!(err.to_string(), "unauthorized");
+
+        let err = ApiError::RateLimited;
+        assert_eq!(err.to_string(), "rate limited");
+
+        let err = ApiError::Timeout;
+        assert_eq!(err.to_string(), "timeout");
+
+        let err = ApiError::MissingField("id");
+        assert_eq!(err.to_string(), "missing protocol field `id`");
+    }
+}

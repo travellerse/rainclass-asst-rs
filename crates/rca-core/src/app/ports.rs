@@ -197,3 +197,83 @@ pub trait UpdateCheckerPort: Send + Sync {
         current_version: &str,
     ) -> Result<Option<UpdateInfo>, UpdatePortError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_api_port_error_constructors() {
+        let err = ApiPortError::request("login", "network error");
+        match err {
+            ApiPortError::RequestFailed { context, detail } => {
+                assert_eq!(context, "login");
+                assert_eq!(detail, "network error");
+            }
+            _ => panic!("Expected ApiPortError::RequestFailed"),
+        }
+
+        let err = ApiPortError::protocol("unsupported version");
+        match err {
+            ApiPortError::ProtocolChanged(detail) => {
+                assert_eq!(detail, "unsupported version");
+            }
+            _ => panic!("Expected ApiPortError::ProtocolChanged"),
+        }
+
+        let err = ApiPortError::auth("invalid token");
+        match err {
+            ApiPortError::AuthFailed(detail) => {
+                assert_eq!(detail, "invalid token");
+            }
+            _ => panic!("Expected ApiPortError::AuthFailed"),
+        }
+    }
+
+    #[test]
+    fn test_storage_port_error_constructors() {
+        let err = StoragePortError::load("file not found");
+        match err {
+            StoragePortError::LoadFailed(detail) => {
+                assert_eq!(detail, "file not found");
+            }
+            _ => panic!("Expected StoragePortError::LoadFailed"),
+        }
+
+        let err = StoragePortError::save("disk full");
+        match err {
+            StoragePortError::SaveFailed(detail) => {
+                assert_eq!(detail, "disk full");
+            }
+            _ => panic!("Expected StoragePortError::SaveFailed"),
+        }
+
+        let err = StoragePortError::clear("permission denied");
+        match err {
+            StoragePortError::ClearFailed(detail) => {
+                assert_eq!(detail, "permission denied");
+            }
+            _ => panic!("Expected StoragePortError::ClearFailed"),
+        }
+    }
+
+    #[test]
+    fn test_notify_port_error_constructors() {
+        let err = NotifyPortError::send("connection timeout");
+        match err {
+            NotifyPortError::SendFailed(detail) => {
+                assert_eq!(detail, "connection timeout");
+            }
+        }
+    }
+
+    #[test]
+    fn test_update_port_error_constructors() {
+        let err = UpdatePortError::check("api offline");
+        match err {
+            UpdatePortError::CheckFailed(detail) => {
+                assert_eq!(detail, "api offline");
+            }
+        }
+    }
+}

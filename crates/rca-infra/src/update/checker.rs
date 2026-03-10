@@ -23,6 +23,7 @@ pub struct GithubReleaseChecker {
     client: reqwest::Client,
     owner: String,
     repo: String,
+    base_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,7 +56,14 @@ impl GithubReleaseChecker {
             client,
             owner: owner.into(),
             repo: repo.into(),
+            base_url: "https://api.github.com".to_string(),
         })
+    }
+
+    #[cfg(test)]
+    pub fn with_base_url(mut self, base_url: String) -> Self {
+        self.base_url = base_url;
+        self
     }
 
     fn normalize_version(input: &str) -> Option<Version> {
@@ -68,8 +76,8 @@ impl GithubReleaseChecker {
 impl UpdateChecker for GithubReleaseChecker {
     async fn check_latest(&self, current_version: &str) -> Result<Option<UpdateInfo>, UpdateError> {
         let url = format!(
-            "https://api.github.com/repos/{}/{}/releases/latest",
-            self.owner, self.repo
+            "{}/repos/{}/{}/releases/latest",
+            self.base_url, self.owner, self.repo
         );
 
         let response = self
@@ -113,7 +121,7 @@ impl UpdateChecker for GithubReleaseChecker {
 
 #[cfg(test)]
 mod tests {
-    use super::GithubReleaseChecker;
+    use super::{GithubReleaseChecker, UpdateChecker};
 
     #[test]
     fn normalize_version_accepts_v_prefix() {
@@ -125,5 +133,60 @@ mod tests {
     fn normalize_version_rejects_invalid_value() {
         let parsed = GithubReleaseChecker::normalize_version("not-a-semver");
         assert!(parsed.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_github_release_checker_scenarios() {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url();
+
+        let checker = GithubReleaseChecker::new("owner", "repo")
+            .unwrap()
+            .with_base_url(url);
+
+        // Case 1: Update available
+        let _m1 = server
+            .mock("GET", "/repos/owner/repo/releases/latest")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{
+                "tag_name": "v1.1.0",
+                "html_url": "https://github.com/owner/repo/releases/tag/v1.1.0",
+                "published_at": "2023-01-01T00:00:00Z",
+                "draft": false,
+                "prerelease": false
+            }"#,
+            )
+            .create_async()
+            .await;
+
+        let result = checker.check_latest("v1.0.0").await.unwrap();
+        assert!(result.is_some());
+        let info = result.unwrap();
+        assert_eq!(info.latest_version, "1.1.0");
+
+        // Case 2: No update (same version)
+        let result = checker.check_latest("v1.1.0").await.unwrap();
+        assert!(result.is_none());
+
+        // Case 3: Draft/Prerelease
+        server.reset();
+        let _m2 = server
+            .mock("GET", "/repos/owner/repo/releases/latest")
+            .with_status(200)
+            .with_body(
+                r#"{
+                "tag_name": "v1.2.0",
+                "html_url": "...",
+                "published_at": "2023-01-01T00:00:00Z",
+                "draft": true,
+                "prerelease": false
+            }"#,
+            )
+            .create_async()
+            .await;
+        let result = checker.check_latest("v1.0.0").await.unwrap();
+        assert!(result.is_none());
     }
 }

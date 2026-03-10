@@ -511,10 +511,10 @@ fn map_problem_type(raw: &Value) -> ProblemType {
     }
 
     let text = raw.as_str().unwrap_or_default().to_ascii_lowercase();
-    if text.contains("single") || text.contains("choice") {
-        ProblemType::SingleChoice
-    } else if text.contains("multiple") {
+    if text.contains("multiple") {
         ProblemType::MultipleChoice
+    } else if text.contains("single") || text.contains("choice") {
+        ProblemType::SingleChoice
     } else if text.contains("blank") || text.contains("fill") {
         ProblemType::FillBlank
     } else {
@@ -1631,5 +1631,76 @@ mod tests {
         let headers = reqwest::header::HeaderMap::new();
         let result = YktApiPort::extract_session_id(&headers);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_map_problem_type() {
+        assert_eq!(map_problem_type(&json!(1)), ProblemType::SingleChoice);
+        assert_eq!(map_problem_type(&json!(2)), ProblemType::MultipleChoice);
+        assert_eq!(map_problem_type(&json!(3)), ProblemType::FillBlank);
+        assert_eq!(map_problem_type(&json!(99)), ProblemType::Unknown);
+        assert_eq!(
+            map_problem_type(&json!("Single")),
+            ProblemType::SingleChoice
+        );
+        assert_eq!(
+            map_problem_type(&json!("multiple choice")),
+            ProblemType::MultipleChoice
+        );
+        assert_eq!(
+            map_problem_type(&json!("fill in the blank")),
+            ProblemType::FillBlank
+        );
+    }
+
+    #[test]
+    fn test_parse_problem_options() {
+        let problem = json!({
+            "options": [
+                {"optionId": "A", "text": "Option A"},
+                {"option_id": "B", "content": "Option B"}
+            ]
+        });
+        let options = parse_problem_options(&problem);
+        assert_eq!(options.len(), 2);
+        assert_eq!(options[0].option_id, "A");
+        assert_eq!(options[1].option_id, "B");
+
+        let problem_v2 = json!({
+            "choiceList": ["C", "D"]
+        });
+        let options_v2 = parse_problem_options(&problem_v2);
+        assert_eq!(options_v2.len(), 2);
+        assert_eq!(options_v2[0].option_id, "0");
+        assert_eq!(options_v2[0].text, "C");
+    }
+
+    #[test]
+    fn test_parse_correct_answers() {
+        let problem = json!({
+            "answers": ["A", 2, true]
+        });
+        let answers = parse_correct_answers(&problem);
+        assert_eq!(answers, vec!["A", "2", "true"]);
+    }
+
+    #[test]
+    fn test_parse_blanks() {
+        let problem = json!({
+            "blanks": [
+                {"answers": ["one", 1]},
+                {"answers": ["two"]}
+            ]
+        });
+        let blanks = parse_blanks(&problem);
+        assert_eq!(blanks.len(), 2);
+        assert_eq!(blanks[0].accepted_values, vec!["one", "1"]);
+    }
+
+    #[test]
+    fn test_parse_limit() {
+        assert_eq!(parse_limit(&json!({"limit": 60})), Some(60));
+        assert_eq!(parse_limit(&json!({"limit": -1})), None);
+        assert_eq!(parse_limit(&json!({})), None);
     }
 }

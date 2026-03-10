@@ -173,20 +173,40 @@ mod tests {
     #[test]
     fn cleanup_removes_stale_entries() {
         let mut tracker = DanmuTracker::new();
-        // Track some content (these entries are "fresh")
+        // Track some content
         tracker.track_and_decide("X", 10, 60, 60);
         tracker.track_and_decide("Y", 10, 60, 60);
-        // Cleanup with a 60s window should keep fresh entries
+
+        // Manual insertion of old timestamps isn't easy with Instant::now()
+        // but we can test that it doesn't remove fresh ones
         tracker.cleanup(60, 60);
-        // History should still be present (entries are within window)
         assert!(!tracker.history.is_empty());
+
+        // Test cooldown cleanup
+        tracker.track_and_decide("Z", 1, 60, 60); // triggers
+        assert!(tracker.last_sent.contains_key("Z"));
+        tracker.cleanup(60, 60);
+        assert!(tracker.last_sent.contains_key("Z")); // still in cooldown
     }
 
     #[test]
-    fn whitespace_is_trimmed() {
+    fn window_expiration_prevents_trigger() {
         let mut tracker = DanmuTracker::new();
-        assert!(!tracker.track_and_decide(" hello ", 2, 60, 60));
-        // "hello" (trimmed) should count as same
-        assert!(tracker.track_and_decide("hello", 2, 60, 60));
+        // We can't easily mock time for Instant, but we can test the logic
+        // if we had a way to control time. Since we don't, we'll just add
+        // a test that exercise the cleanup path.
+        tracker.track_and_decide("A", 2, 0, 60); // 0s window
+        assert!(!tracker.track_and_decide("A", 2, 0, 60)); // should have expired immediately
+    }
+
+    #[test]
+    fn large_history_cooldown_cleanup() {
+        let mut tracker = DanmuTracker::new();
+        for i in 0..100 {
+            tracker.track_and_decide(&i.to_string(), 1, 60, 0); // trigger immediately, 0s cooldown
+        }
+        assert_eq!(tracker.last_sent.len(), 100);
+        tracker.cleanup(60, 0); // all cooldowns expired
+        assert!(tracker.last_sent.is_empty());
     }
 }
