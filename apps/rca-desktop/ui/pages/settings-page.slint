@@ -3,6 +3,7 @@ import { Theme } from "../theme.slint";
 import { GlassCard } from "../components/glass-card.slint";
 import { ToggleSwitch } from "../components/toggle-switch.slint";
 import { PrimaryButton } from "../components/primary-button.slint";
+import { I18n } from "../i18n.slint";
 
 export component SettingsPage inherits Rectangle {
     in-out property <int> setting-monitor-interval;
@@ -25,7 +26,7 @@ export component SettingsPage inherits Rectangle {
             spacing: Theme.spacing-lg;
 
             Text {
-                text: "设置";
+                text: I18n.t("nav_settings");
                 font-size: Theme.font-xl;
                 font-weight: 700;
                 color: Theme.text-primary;
@@ -39,7 +40,7 @@ export component SettingsPage inherits Rectangle {
                     spacing: Theme.spacing-md;
 
                     Text {
-                        text: "监控设置";
+                        text: I18n.t("settings_monitor_title");
                         font-size: Theme.font-md;
                         font-weight: 600;
                         color: Theme.text-primary;
@@ -50,7 +51,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "轮询间隔 (秒)";
+                            text: I18n.t("settings_poll_interval");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -70,7 +71,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "选择雨课堂平台";
+                            text: I18n.t("settings_platform");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -94,7 +95,7 @@ export component SettingsPage inherits Rectangle {
                     spacing: Theme.spacing-md;
 
                     Text {
-                        text: "自动化";
+                        text: I18n.t("settings_auto_title");
                         font-size: Theme.font-md;
                         font-weight: 600;
                         color: Theme.text-primary;
@@ -105,7 +106,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "自动签到";
+                            text: I18n.t("settings_auto_checkin");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -117,7 +118,7 @@ export component SettingsPage inherits Rectangle {
                         }
 
                         Text {
-                            text: root.setting-auto-checkin ? "已启用" : "已停用";
+                            text: root.setting-auto-checkin ? I18n.t("status_enabled") : I18n.t("status_disabled");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             vertical-alignment: center;
@@ -129,7 +130,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "自动答题";
+                            text: I18n.t("settings_auto_answer");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -141,7 +142,7 @@ export component SettingsPage inherits Rectangle {
                         }
 
                         Text {
-                            text: root.setting-auto-answer ? "已启用" : "已停用";
+                            text: root.setting-auto-answer ? I18n.t("status_enabled") : I18n.t("status_disabled");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             vertical-alignment: center;
@@ -153,7 +154,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "随机盲猜答案";
+                            text: I18n.t("settings_random_guess");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -165,7 +166,7 @@ export component SettingsPage inherits Rectangle {
                         }
 
                         Text {
-                            text: root.setting-auto-answer-random-guess ? "已启用" : "已停用 (未解出答案时放弃提交)";
+                            text: root.setting-auto-answer-random-guess ? I18n.t("status_enabled") : I18n.t("status_disabled_no_submit");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             vertical-alignment: center;
@@ -177,7 +178,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "答题延迟 (ms)";
+                            text: I18n.t("settings_answer_delay");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -201,7 +202,7 @@ export component SettingsPage inherits Rectangle {
                     spacing: Theme.spacing-md;
 
                     Text {
-                        text: "通知与更新";
+                        text: I18n.t("settings_notify_title");
                         font-size: Theme.font-md;
                         font-weight: 600;
                         color: Theme.text-primary;
@@ -212,7 +213,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "系统通知";
+                            text: I18n.t("settings_system_notify");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -224,7 +225,7 @@ export component SettingsPage inherits Rectangle {
                         }
 
                         Text {
-                            text: root.setting-notify-enabled ? "已启用" : "已停用";
+                            text: root.setting-notify-enabled ? I18n.t("status_enabled") : I18n.t("status_disabled");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             vertical-alignment: center;
@@ -236,7 +237,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "Webhook推送URL";
+                            text: I18n.t("settings_webhook_url");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -245,7 +246,7 @@ export component SettingsPage inherits Rectangle {
 
                         LineEdit {
                             text <=> root.setting-webhook-url;
-                            placeholder-text: "如: https://sctapi.ftqq.com/xxx.send";
+                            placeholder-text: I18n.t("settings_webhook_placeholder");
                             horizontal-stretch: 1;
                         }
                     }
@@ -255,7 +256,7 @@ export component SettingsPage inherits Rectangle {
                         alignment: start;
 
                         Text {
-                            text: "启动时检查更新";
+                            text: I18n.t("settings_check_update_startup");
                             font-size: Theme.font-sm;
                             color: Theme.text-secondary;
                             vertical-alignment: center;
@@ -267,7 +268,7 @@ export component SettingsPage inherits Rectangle {
                         }
 
                         Text {
-                            text: root.setting-check-update-on-startup ? "已启用" : "已停用";
+                            text: root.setting-check-update-on-startup ? I18n.t("status_enabled") : I18n.t("status_disabled");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             vertical-alignment: center;
@@ -280,7 +281,7 @@ export component SettingsPage inherits Rectangle {
                 alignment: end;
 
                 PrimaryButton {
-                    text: "保存配置";
+                    text: I18n.t("btn_save_config");
                     clicked => {
                         root.save-config-clicked();
                     }

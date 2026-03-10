@@ -2,6 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { GlassCard } from "../components/glass-card.slint";
 import { EventRow } from "../models.slint";
+import { I18n } from "../i18n.slint";
 
 export component EventsPage inherits Rectangle {
     in property <[EventRow]> events;
@@ -13,7 +14,7 @@ export component EventsPage inherits Rectangle {
         spacing: Theme.spacing-md;
 
         Text {
-            text: "事件日志";
+            text: I18n.t("nav_events");
             font-size: Theme.font-xl;
             font-weight: 700;
             color: Theme.text-primary;
@@ -23,7 +24,7 @@ export component EventsPage inherits Rectangle {
             vertical-stretch: 1;
 
             if root.events.length == 0: Text {
-                text: "暂无事件";
+                text: I18n.t("no_events");
                 font-size: Theme.font-sm;
                 color: Theme.text-muted;
                 horizontal-alignment: center;

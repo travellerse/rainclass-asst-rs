@@ -6,6 +6,7 @@ import { Theme } from "../theme.slint";
 import { GlassCard } from "../components/glass-card.slint";
 import { PrimaryButton } from "../components/primary-button.slint";
 import { LessonRow } from "../models.slint";
+import { I18n } from "../i18n.slint";
 
 export component OverviewPage inherits Rectangle {
     in property <string> auth-status-text;
@@ -45,14 +46,14 @@ export component OverviewPage inherits Rectangle {
                     spacing: Theme.spacing-md;
 
                     Text {
-                        text: root.is-authenticated ? (root.monitor-running ? "正在自动监控" : "已连接，准备开始监控") : "请先完成登录";
+                        text: root.is-authenticated ? (root.monitor-running ? I18n.t("monitor_running") : I18n.t("monitor_ready")) : I18n.t("please_login");
                         font-size: Theme.font-xl;
                         font-weight: 700;
                         color: Theme.text-primary;
                     }
 
                     Text {
-                        text: root.is-authenticated ? (root.monitor-running ? "当前状态：" + root.monitor-status-text : "当前登录：" + root.auth-status-text) : "登录后可启动自动监控与自动化任务";
+                        text: root.is-authenticated ? (root.monitor-running ? I18n.t("current_status_prefix") + root.monitor-status-text : I18n.t("current_login_prefix") + root.auth-status-text) : I18n.t("login_hint");
                         font-size: Theme.font-sm;
                         color: Theme.text-secondary;
                     }
@@ -61,14 +62,14 @@ export component OverviewPage inherits Rectangle {
                         spacing: Theme.spacing-sm;
 
                         if !root.is-authenticated: PrimaryButton {
-                            text: "扫码登录";
+                            text: I18n.t("btn_qr_login");
                             clicked => {
                                 root.login-clicked();
                             }
                         }
 
                         if root.is-authenticated: PrimaryButton {
-                            text: root.monitor-running ? "停止监控" : "启动监控";
+                            text: root.monitor-running ? I18n.t("btn_stop_monitor") : I18n.t("btn_start_monitor");
                             disabled: !root.monitor-running && !root.can-start-monitor;
                             clicked => {
                                 if root.monitor-running {
@@ -80,14 +81,14 @@ export component OverviewPage inherits Rectangle {
                         }
 
                         if root.is-authenticated: Button {
-                            text: "登出";
+                            text: I18n.t("btn_logout");
                             clicked => {
                                 root.logout-clicked();
                             }
                         }
 
                         Button {
-                            text: "检查更新";
+                            text: I18n.t("btn_check_update");
                             clicked => {
                                 root.check-update-clicked();
                             }
@@ -132,7 +133,7 @@ export component OverviewPage inherits Rectangle {
 
                     HorizontalLayout {
                         Text {
-                            text: "当前课程";
+                            text: I18n.t("current_lesson");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             letter-spacing: 0.5px;
@@ -140,7 +141,7 @@ export component OverviewPage inherits Rectangle {
                         }
 
                         if root.is-authenticated && !root.monitor-running: PrimaryButton {
-                            text: root.selected-lesson-index >= 0 ? "启动选中课程监控" : "启动监控";
+                            text: root.selected-lesson-index >= 0 ? I18n.t("btn_start_selected_monitor") : I18n.t("btn_start_monitor");
                             disabled: !root.can-start-monitor;
                             clicked => {
                                 root.start-monitor-clicked();
@@ -158,7 +159,7 @@ export component OverviewPage inherits Rectangle {
                             padding-right: Theme.spacing-md;
 
                             Text {
-                                text: "课程名";
+                                text: I18n.t("tbl_course_name");
                                 font-size: Theme.font-sm;
                                 font-weight: 600;
                                 color: Theme.text-secondary;
@@ -167,7 +168,7 @@ export component OverviewPage inherits Rectangle {
                             }
 
                             Text {
-                                text: "教师";
+                                text: I18n.t("tbl_teacher");
                                 font-size: Theme.font-sm;
                                 font-weight: 600;
                                 color: Theme.text-secondary;
@@ -176,7 +177,7 @@ export component OverviewPage inherits Rectangle {
                             }
 
                             Text {
-                                text: "状态";
+                                text: I18n.t("tbl_status");
                                 font-size: Theme.font-sm;
                                 font-weight: 600;
                                 color: Theme.text-secondary;
@@ -189,7 +190,7 @@ export component OverviewPage inherits Rectangle {
                     if root.lessons.length == 0: Rectangle {
                         height: 64px;
                         Text {
-                            text: "暂无课程";
+                            text: I18n.t("no_lessons");
                             font-size: Theme.font-sm;
                             color: Theme.text-muted;
                             horizontal-alignment: center;
@@ -253,7 +254,7 @@ export component OverviewPage inherits Rectangle {
                     spacing: Theme.spacing-md;
 
                     Text {
-                        text: "登录状态: " + root.auth-status-text;
+                        text: I18n.t("login_status_prefix") + root.auth-status-text;
                         font-size: Theme.font-sm;
                         color: Theme.text-secondary;
                         horizontal-stretch: 1;

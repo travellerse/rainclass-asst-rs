@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use rca_core::app::{AppCommand, AppConfigDto, AppQueryResult, AppService};
 
+rust_i18n::i18n!("../../locales", fallback = "zh-CN");
+
 slint::include_modules!();
 
 mod app_controller;
@@ -54,6 +56,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     // ── Bootstrap controller & UI ──
     let controller = Arc::new(AppController::bootstrap()?);
     let ui = AppWindow::new()?;
+
+    ui.global::<I18n>()
+        .on_t(|key| rust_i18n::t!(key.as_str()).to_string().into());
 
     // optional update check from controller state
     let startup_should_check_update = controller

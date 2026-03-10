@@ -5,17 +5,19 @@ import { GlassCard } from "components/glass-card.slint";
 import { OverviewPage } from "pages/overview-page.slint";
 import { EventsPage } from "pages/events-page.slint";
 import { SettingsPage } from "pages/settings-page.slint";
+import { I18n } from "i18n.slint";
 
+export { I18n }
 export component AppWindow inherits Window {
-    title: "RainClassroom Assistant";
+    title: I18n.t("app_title");
     width: 960px;
     height: 640px;
     background: Theme.bg;
 
     in-out property <int> current-page: 0;
-    in-out property <string> auth-status-text: "未登录";
+    in-out property <string> auth-status-text: I18n.t("status_offline");
     in-out property <string> auth-status-kind: "offline";
-    in-out property <string> monitor-status-text: "监控未启动";
+    in-out property <string> monitor-status-text: I18n.t("monitor_not_started");
     in-out property <bool> monitor-running: false;
     in-out property <int> selected-lesson-index: -1;
     in-out property <string> last-error-text: "";
@@ -61,7 +63,7 @@ export component AppWindow inherits Window {
                     }
 
                     Text {
-                        text: "摸鱼课堂";
+                        text: I18n.t("app_name");
                         font-size: Theme.font-lg;
                         font-weight: 700;
                         color: Theme.text-primary;
@@ -83,7 +85,7 @@ export component AppWindow inherits Window {
 
                 NavItem {
                     icon: "📊";
-                    label: "总览";
+                    label: I18n.t("nav_overview");
                     active: root.current-page == 0;
                     activated => {
                         root.current-page = 0;
@@ -92,7 +94,7 @@ export component AppWindow inherits Window {
 
                 NavItem {
                     icon: "📋";
-                    label: "事件日志";
+                    label: I18n.t("nav_events");
                     active: root.current-page == 1;
                     activated => {
                         root.current-page = 1;
@@ -101,7 +103,7 @@ export component AppWindow inherits Window {
 
                 NavItem {
                     icon: "⚙️";
-                    label: "设置";
+                    label: I18n.t("nav_settings");
                     active: root.current-page == 2;
                     activated => {
                         root.current-page = 2;

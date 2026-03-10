@@ -30,3 +30,4 @@ tracing = "0.1"
 slint = "1.15.1"
 slint-build = "1.15.1"
 clap = { version = "4", features = ["derive"] }
+rust-i18n = "3"

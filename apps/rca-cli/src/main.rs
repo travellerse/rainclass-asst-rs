@@ -24,6 +24,8 @@ use rca_infra::update::GithubReleaseChecker;
 use tokio::time::{Duration, Instant, sleep};
 use tracing::info;
 
+rust_i18n::i18n!("../../locales", fallback = "zh-CN");
+
 #[derive(Debug, Parser)]
 #[command(name = "rca-cli", about = "RainClassroom Assistant CLI")]
 struct Cli {
@@ -75,12 +77,22 @@ fn default_config() -> AppConfigDto {
 
 fn auth_state_summary(state: &AuthState) -> String {
     match state {
-        AuthState::LoggedOut => "未登录".to_string(),
-        AuthState::WaitingQrScan { scene_id, .. } => format!("等待扫码 (scene_id={scene_id})"),
-        AuthState::WaitingConfirm { scene_id } => format!("等待确认 (scene_id={scene_id})"),
-        AuthState::LoggedIn { user_id } => format!("已登录 ({user_id})"),
-        AuthState::Refreshing { user_id } => format!("刷新会话中 ({user_id})"),
-        AuthState::Failed { reason } => format!("失败: {reason}"),
+        AuthState::LoggedOut => rust_i18n::t!("cli_auth_offline").to_string(),
+        AuthState::WaitingQrScan { scene_id, .. } => {
+            rust_i18n::t!("cli_auth_waiting_qr", scene_id = scene_id).to_string()
+        }
+        AuthState::WaitingConfirm { scene_id } => {
+            rust_i18n::t!("cli_auth_waiting_confirm", scene_id = scene_id).to_string()
+        }
+        AuthState::LoggedIn { user_id } => {
+            rust_i18n::t!("cli_auth_logged_in", user_id = user_id).to_string()
+        }
+        AuthState::Refreshing { user_id } => {
+            rust_i18n::t!("cli_auth_refreshing", user_id = user_id).to_string()
+        }
+        AuthState::Failed { reason } => {
+            rust_i18n::t!("cli_auth_failed", reason = reason).to_string()
+        }
     }
 }
 
@@ -142,12 +154,12 @@ async fn resolve_terminal_qr_payload(payload: &str) -> String {
 fn print_login_qr(payload: &str) {
     let trimmed = payload.trim();
     if trimmed.is_empty() {
-        println!("二维码内容为空，无法渲染。");
+        println!("{}", rust_i18n::t!("cli_qr_empty"));
         return;
     }
 
     if trimmed.starts_with("<svg") {
-        println!("收到 SVG 内容，终端二维码渲染跳过；可复制以下内容到浏览器查看：");
+        println!("{}", rust_i18n::t!("cli_qr_svg"));
         println!("{trimmed}");
         return;
     }
@@ -155,13 +167,16 @@ fn print_login_qr(payload: &str) {
     match QrCode::new(trimmed.as_bytes()) {
         Ok(code) => {
             let rendered = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
-            println!("请使用微信扫码（终端二维码）：\n");
+            println!("{}", rust_i18n::t!("cli_qr_scan_prompt"));
             println!("{rendered}");
-            println!("扫码内容: {trimmed}");
+            println!("{}", rust_i18n::t!("cli_qr_content", content = trimmed));
         }
         Err(err) => {
-            println!("二维码渲染失败: {err}");
-            println!("请手动打开/复制扫码内容: {trimmed}");
+            println!("{}", rust_i18n::t!("cli_qr_render_fail", err = err));
+            println!(
+                "{}",
+                rust_i18n::t!("cli_qr_manual_prompt", content = trimmed)
+            );
         }
     }
 }

@@ -15,6 +15,7 @@ chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 tracing-appender = "0.2.4"
+rust-i18n.workspace = true
 
 [build-dependencies]
 slint-build.workspace = true
