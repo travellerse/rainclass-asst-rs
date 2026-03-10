@@ -203,7 +203,7 @@ impl YktApiPort {
         &self,
         auth: &AuthContext,
         lesson_id: u64,
-    ) -> Result<(u64, String), ApiError> {
+    ) -> Result<(u64, String, String), ApiError> {
         let session = AuthSession {
             user_id: auth.user_id,
             access_token: auth.access_token.clone(),
@@ -215,32 +215,57 @@ impl YktApiPort {
             .map_err(|err| ApiError::protocol("build session headers", err))?;
 
         let checkin_url = format!("https://{}/api/v3/lesson/checkin", self.host);
-        let response = self
-            .client
-            .post(checkin_url)
-            .headers(headers.clone())
-            .json(&json!({
-                "source": 5,
-                "lessonId": lesson_id.to_string(),
-            }))
-            .send()
-            .await
-            .map_err(ApiError::Http)?;
-        let response_headers = response.headers().clone();
-        let checkin_value: Value = response.json().await.map_err(ApiError::Http)?;
-        let checkin_data = Self::parse_api_ok(checkin_value)?;
 
-        let ws_auth_token = response_headers
-            .get("set-auth")
-            .and_then(|value| value.to_str().ok())
-            .map(ToString::to_string)
-            .or_else(|| {
-                checkin_data
-                    .get("lessonToken")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string)
-            })
-            .ok_or(ApiError::MissingField("ws_auth_token"))?;
+        let mut bearer_token = None;
+        let mut lesson_token = None;
+
+        for _ in 0..3 {
+            let response = self
+                .client
+                .post(&checkin_url)
+                .headers(headers.clone())
+                .json(&json!({
+                    "source": 5,
+                    "lessonId": lesson_id.to_string(),
+                }))
+                .send()
+                .await
+                .map_err(ApiError::Http)?;
+
+            let response_headers = response.headers().clone();
+
+            if let Some(auth_val) = response_headers
+                .get("set-auth")
+                .or_else(|| response_headers.get("Set-Auth"))
+                && let Ok(auth_str) = auth_val.to_str()
+            {
+                bearer_token = Some(auth_str.to_string());
+            }
+
+            let checkin_value: Value = response.json().await.map_err(ApiError::Http)?;
+            if let Ok(data) = Self::parse_api_ok(checkin_value.clone()) {
+                if lesson_token.is_none() {
+                    lesson_token = data
+                        .get("lessonToken")
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string);
+                }
+            } else {
+                tracing::warn!("checkin response error: {:?}", checkin_value);
+            }
+
+            if bearer_token.is_some() && lesson_token.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        let bearer_token = bearer_token.unwrap_or_default();
+        let lesson_token = lesson_token.ok_or(ApiError::MissingField(
+            "lessonToken (tried 3 times but failed)",
+        ))?;
+        tracing::debug!("WebSocket bearer acquired: {}", bearer_token);
+        tracing::debug!("WebSocket lesson token acquired: {}", lesson_token);
 
         let user_url = format!("https://{}/api/v3/user/basic-info", self.host);
         let user_value: Value = self
@@ -261,7 +286,7 @@ impl YktApiPort {
             .filter(|id| *id != 0)
             .ok_or(ApiError::MissingField("user_id"))?;
 
-        Ok((user_id, ws_auth_token))
+        Ok((user_id, bearer_token, lesson_token))
     }
 }
 
@@ -272,7 +297,8 @@ impl RainClassroomWs for YktApiPort {
         auth: &AuthContext,
         lesson_id: u64,
     ) -> Result<WsEventStream, ApiError> {
-        let (user_id, ws_auth_token) = self.prepare_lesson_ws_auth(auth, lesson_id).await?;
+        let (user_id, bearer_token, lesson_token) =
+            self.prepare_lesson_ws_auth(auth, lesson_id).await?;
 
         let ws_url = format!("wss://{}/wsapp/", self.host);
         let mut request = ws_url
@@ -289,10 +315,18 @@ impl RainClassroomWs for YktApiPort {
             HeaderValue::from_str(&self.user_agent)
                 .map_err(|err| ApiError::invalid_header("user-agent", err))?,
         );
+        if !bearer_token.is_empty() {
+            request.headers_mut().insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {}", bearer_token))
+                    .map_err(|err| ApiError::invalid_header("authorization", err))?,
+            );
+        }
+        // Add Host and Origin headers to simulate browser / standard client
         request.headers_mut().insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {ws_auth_token}"))
-                .map_err(|err| ApiError::invalid_header("authorization", err))?,
+            "Origin",
+            HeaderValue::from_str(&format!("https://{}", self.host))
+                .map_err(|err| ApiError::invalid_header("origin", err))?,
         );
 
         let (mut socket, _) = connect_async(request)
@@ -301,12 +335,13 @@ impl RainClassroomWs for YktApiPort {
 
         let hello = json!({
             "op": "hello",
-            "userid": user_id.to_string(),
+            "userid": user_id,
             "role": "student",
-            "auth": ws_auth_token,
+            "auth": lesson_token,
             "lessonid": lesson_id.to_string(),
         })
         .to_string();
+        tracing::debug!("Sending initial WS message: {}", hello);
         socket
             .send(Message::Text(hello.into()))
             .await
@@ -318,7 +353,10 @@ impl RainClassroomWs for YktApiPort {
                 let text = match frame {
                     Ok(Message::Text(text)) => text.to_string(),
                     Ok(Message::Binary(bin)) => String::from_utf8_lossy(&bin).to_string(),
-                    Ok(_) => continue,
+                    Ok(_) => {
+                        tracing::debug!("Received non-text/binary WS frame, continuing...");
+                        continue;
+                    }
                     Err(err) => {
                         let err_str = err.to_string();
                         if err_str
@@ -331,6 +369,8 @@ impl RainClassroomWs for YktApiPort {
                         break;
                     }
                 };
+
+                tracing::debug!("Received WS message: {}", text);
 
                 let value: Value = match serde_json::from_str(&text) {
                     Ok(v) => v,
