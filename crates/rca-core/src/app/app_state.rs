@@ -15,7 +15,14 @@ pub struct AppState {
 pub enum AppEvent {
     StateChanged(AppState),
     Notification(AppNotification),
-    UpdateAvailable { version: String, url: String },
+    UpdateAvailable {
+        version: String,
+        url: String,
+    },
+    PresentationDiscovered {
+        lesson_id: crate::domain::LessonId,
+        presentation_id: u64,
+    },
 }
 
 #[derive(Debug, Clone)]

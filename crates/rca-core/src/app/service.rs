@@ -64,6 +64,26 @@ impl CoreAppService {
                         guard.app_state.monitor_running = false;
                     }
 
+                    if let CoreEvent::PresentationUpdated {
+                        lesson_id,
+                        presentation_id,
+                    } = &event
+                    {
+                        let inner_event_clone = inner_clone.clone();
+                        let lid = *lesson_id;
+                        let pid = *presentation_id;
+                        tokio::spawn(async move {
+                            Self::emit_event_with_inner(
+                                &inner_event_clone,
+                                AppEvent::PresentationDiscovered {
+                                    lesson_id: lid,
+                                    presentation_id: pid,
+                                },
+                            )
+                            .await;
+                        });
+                    }
+
                     if guard.config.notify_enabled {
                         let maybe_notify = match &event {
                             CoreEvent::AutoAnswerSubmitted {
@@ -455,6 +475,33 @@ impl AppService for CoreAppService {
                 self.emit_state_changed().await;
                 Ok(())
             }
+            AppCommand::DownloadPresentation {
+                presentation_id,
+                lesson_id,
+                save_dir,
+            } => {
+                let session = self
+                    .deps
+                    .session_store
+                    .load_session()
+                    .await
+                    .map_err(AppError::from)?
+                    .ok_or_else(|| {
+                        AppError::InvalidCommand("必须先登录才能下载 PPT".to_string())
+                    })?;
+                let path = self
+                    .deps
+                    .api
+                    .download_presentation(&session, presentation_id, lesson_id, &save_dir)
+                    .await
+                    .map_err(AppError::from)?;
+                self.emit_event(AppEvent::Notification(crate::app::AppNotification {
+                    title: "PPT 下载成功".to_string(),
+                    body: format!("已保存至: {}", path.display()),
+                }))
+                .await;
+                Ok(())
+            }
         }
     }
 
@@ -641,6 +688,16 @@ mod tests {
                 }
             });
             Ok(rx)
+        }
+
+        async fn download_presentation(
+            &self,
+            _session: &AuthSession,
+            _presentation_id: u64,
+            _lesson_id: Option<u64>,
+            _save_dir: &std::path::Path,
+        ) -> Result<std::path::PathBuf, ApiPortError> {
+            Ok(std::path::PathBuf::from("mock.pdf"))
         }
     }
 

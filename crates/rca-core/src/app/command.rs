@@ -6,13 +6,25 @@ pub enum AppCommand {
     RestoreSession,
     RefreshSession,
     LoginByQr,
-    PollLogin { scene_id: String },
-    WaitLogin { scene_id: String, timeout_secs: u64 },
+    PollLogin {
+        scene_id: String,
+    },
+    WaitLogin {
+        scene_id: String,
+        timeout_secs: u64,
+    },
     Logout,
     StartMonitor,
     StopMonitor,
     CheckUpdate,
-    SaveConfig { config: AppConfigDto },
+    SaveConfig {
+        config: AppConfigDto,
+    },
+    DownloadPresentation {
+        presentation_id: u64,
+        lesson_id: Option<u64>,
+        save_dir: std::path::PathBuf,
+    },
 }
 
 #[derive(Debug, Clone)]

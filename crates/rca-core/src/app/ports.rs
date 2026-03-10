@@ -170,6 +170,13 @@ pub trait ApiPort: Send + Sync {
         session: &AuthSession,
         lesson_id: LessonId,
     ) -> Result<mpsc::Receiver<LessonWsEvent>, ApiPortError>;
+    async fn download_presentation(
+        &self,
+        session: &AuthSession,
+        presentation_id: u64,
+        lesson_id: Option<u64>,
+        save_dir: &std::path::Path,
+    ) -> Result<std::path::PathBuf, ApiPortError>;
 }
 
 #[async_trait]

@@ -88,6 +88,10 @@ impl YktApiPort {
     fn session_headers(&self, session: &AuthSession) -> Result<HeaderMap, ApiError> {
         let mut headers = HeaderMap::new();
         let cookie = format!("sessionid={}", session.access_token);
+        tracing::debug!(
+            "sending cookie: sessionid=***{}",
+            &session.access_token[session.access_token.len().saturating_sub(4)..]
+        );
         headers.insert(
             COOKIE,
             HeaderValue::from_str(&cookie)
@@ -97,6 +101,15 @@ impl YktApiPort {
             USER_AGENT,
             HeaderValue::from_str(&self.user_agent)
                 .map_err(|err| ApiError::invalid_header("user-agent", err))?,
+        );
+        let origin = format!("https://{}", self.host);
+        headers.insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_str(&origin).unwrap(),
+        );
+        headers.insert(
+            reqwest::header::REFERER,
+            HeaderValue::from_str(&format!("{}/v2/web/index", origin)).unwrap(),
         );
         Ok(headers)
     }
@@ -481,7 +494,43 @@ impl RainClassroomWs for YktApiPort {
                     }
                     "lessonfinished" => WsEventDto::LessonEnded { lesson_id },
                     "hello" => {
-                        // Handshake acknowledged, ignore
+                        let mut unique_pres_ids = std::collections::HashSet::new();
+
+                        // Extract root presentation
+                        if let Some(root_pres_id) = value
+                            .get("presentation")
+                            .and_then(Value::as_str)
+                            .and_then(|s| s.parse::<u64>().ok())
+                            && root_pres_id > 0
+                        {
+                            unique_pres_ids.insert(root_pres_id);
+                        }
+
+                        // Extract from timeline
+                        if let Some(timeline) = value.get("timeline").and_then(Value::as_array) {
+                            for item in timeline {
+                                if let Some(pres_id) = item
+                                    .get("pres")
+                                    .and_then(Value::as_str)
+                                    .and_then(|s| s.parse::<u64>().ok())
+                                    && pres_id > 0
+                                {
+                                    unique_pres_ids.insert(pres_id);
+                                }
+                            }
+                        }
+
+                        // Emit unique events
+                        for pres_id in unique_pres_ids {
+                            let _ = tx
+                                .send(Ok(WsEventDto::PresentationUpdated(
+                                    crate::api::PresentationUpdatedDto {
+                                        lesson_id,
+                                        presentation_id: pres_id,
+                                    },
+                                )))
+                                .await;
+                        }
                         continue;
                     }
                     _ => WsEventDto::Unknown {
@@ -1204,6 +1253,203 @@ impl ApiPort for YktApiPort {
                 return Ok(QrLoginProgress::Pending);
             }
         }
+    }
+
+    async fn download_presentation(
+        &self,
+        session: &AuthSession,
+        presentation_id: u64,
+        lesson_id: Option<u64>,
+        save_dir: &std::path::Path,
+    ) -> Result<std::path::PathBuf, ApiPortError> {
+        let mut headers = self
+            .session_headers(session)
+            .map_err(ApiPortError::protocol)?;
+
+        if let Some(lid) = lesson_id {
+            tracing::info!("performing check-in for lesson {}", lid);
+            let checkin_url = format!("https://{}/api/v3/lesson/checkin", self.host);
+            let response = self
+                .client
+                .post(&checkin_url)
+                .headers(headers.clone())
+                .json(&json!({
+                    "source": 5,
+                    "lessonId": lid.to_string(),
+                }))
+                .send()
+                .await
+                .map_err(|err| ApiPortError::request("lesson checkin", err))?;
+
+            if let Some(auth_val) = response
+                .headers()
+                .get("set-auth")
+                .or_else(|| response.headers().get("Set-Auth"))
+                && let Ok(bearer) = auth_val.to_str()
+            {
+                tracing::info!("acquired lesson bearer token");
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {}", bearer)).unwrap(),
+                );
+            }
+        }
+
+        let fetch_url = format!(
+            "https://{}/api/v3/lesson/presentation/fetch?presentation_id={}",
+            self.host, presentation_id
+        );
+        tracing::info!("presentation fetch URL: {}", fetch_url);
+        let response = self
+            .client
+            .get(&fetch_url)
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|err| ApiPortError::request("presentation fetch", err))?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ApiPortError::protocol(
+                "unauthorized: presentation fetch requires login",
+            ));
+        }
+
+        let response = response
+            .error_for_status()
+            .map_err(|err| ApiPortError::request("presentation fetch HTTP error", err))?;
+
+        let response_text = response
+            .text()
+            .await
+            .map_err(|err| ApiPortError::request("presentation fetch text", err))?;
+
+        let presentation_value: Value = serde_json::from_str(&response_text).map_err(|err| {
+            tracing::error!(
+                "presentation fetch decode failed. status: {}, response: {}",
+                status,
+                response_text
+            );
+            ApiPortError::request("presentation fetch decode", err)
+        })?;
+
+        let presentation_data =
+            Self::parse_api_ok(presentation_value).map_err(ApiPortError::protocol)?;
+
+        let width = presentation_data
+            .get("width")
+            .and_then(Value::as_f64)
+            .unwrap_or(1920.0);
+        let height = presentation_data
+            .get("height")
+            .and_then(Value::as_f64)
+            .unwrap_or(1080.0);
+        let title = presentation_data
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("Presentation");
+
+        let Some(Value::Array(slides)) = presentation_data.get("slides") else {
+            return Err(ApiPortError::protocol(
+                "missing slides array in presentation data",
+            ));
+        };
+
+        let mut slide_urls = Vec::new();
+        for slide in slides {
+            if let Some(cover_url) = slide.get("cover").and_then(Value::as_str)
+                && !cover_url.is_empty()
+            {
+                slide_urls.push(cover_url.to_string());
+            }
+        }
+
+        if slide_urls.is_empty() {
+            return Err(ApiPortError::protocol(
+                "no slide images found in presentation",
+            ));
+        }
+
+        let mut image_bytes_results = Vec::with_capacity(slide_urls.len());
+        let chunk_size = 10;
+        for chunk in slide_urls.chunks(chunk_size) {
+            let mut tasks = Vec::new();
+            for url in chunk {
+                let client = self.client.clone();
+                let url = url.clone();
+                tasks.push(tokio::spawn(async move {
+                    client.get(&url).send().await?.bytes().await
+                }));
+            }
+            let chunk_results = futures_util::future::join_all(tasks).await;
+            for res in chunk_results {
+                let bytes = res
+                    .map_err(|_| ApiPortError::request("tokio join", "task panicked"))?
+                    .map_err(|e| ApiPortError::request("download slide image", e))?;
+                image_bytes_results.push(bytes);
+            }
+        }
+
+        let safe_title = title.replace(&['/', '\\', ':', '*', '?', '"', '<', '>', '|'][..], "_");
+        let safe_title = safe_title.replace(" ", "_");
+        let file_name = format!(
+            "{}_{}.pdf",
+            safe_title,
+            chrono::Utc::now().format("%Y%m%d%H%M%S")
+        );
+        if !save_dir.exists() {
+            tokio::fs::create_dir_all(save_dir)
+                .await
+                .map_err(|e| ApiPortError::request("create save dir", e))?;
+        }
+        let save_path = save_dir.join(file_name);
+
+        use printpdf::*;
+        use std::fs::File;
+
+        let width_mm = Mm((width as f32) * 25.4 / 96.0);
+        let height_mm = Mm((height as f32) * 25.4 / 96.0);
+
+        let (doc, page1, layer1) = PdfDocument::new(title, width_mm, height_mm, "Layer 1");
+
+        for (i, bytes) in image_bytes_results.into_iter().enumerate() {
+            let dynamic_img = ::image::load_from_memory(&bytes).map_err(|e| {
+                ApiPortError::request("decode image from memory", format!("{:?}", e))
+            })?;
+
+            let img = printpdf::Image::from_dynamic_image(&dynamic_img);
+
+            let current_layer = if i == 0 {
+                doc.get_page(page1).get_layer(layer1)
+            } else {
+                let (new_page, new_layer) = doc.add_page(width_mm, height_mm, "Layer 1");
+                doc.get_page(new_page).get_layer(new_layer)
+            };
+
+            let img_width_mm = Mm((dynamic_img.width() as f32) * 25.4 / 96.0);
+            let img_height_mm = Mm((dynamic_img.height() as f32) * 25.4 / 96.0);
+            let scale_x = width_mm.0 / img_width_mm.0;
+            let scale_y = height_mm.0 / img_height_mm.0;
+
+            img.add_to_layer(
+                current_layer,
+                ImageTransform {
+                    translate_x: Some(Mm(0.0)),
+                    translate_y: Some(Mm(0.0)),
+                    rotate: None,
+                    scale_x: Some(scale_x),
+                    scale_y: Some(scale_y),
+                    dpi: None,
+                },
+            );
+        }
+        let mut file = std::io::BufWriter::new(
+            File::create(&save_path).map_err(|e| ApiPortError::request("open pdf file", e))?,
+        );
+        doc.save(&mut file)
+            .map_err(|e| ApiPortError::request("save pdf", e))?;
+
+        Ok(save_path)
     }
 
     async fn refresh_session(&self, refresh_token: &str) -> Result<AuthSession, ApiPortError> {

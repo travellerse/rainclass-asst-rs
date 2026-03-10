@@ -56,12 +56,23 @@ enum Command {
     Monitor {
         #[arg(long)]
         duration_secs: Option<u64>,
+        #[arg(long, short = 'd')]
+        auto_download_ppt: bool,
     },
     Logout,
     /// View or update application configuration
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    /// Download a presentation as PDF
+    DownloadPpt {
+        #[arg(long)]
+        presentation_id: u64,
+        #[arg(long)]
+        lesson_id: Option<u64>,
+        #[arg(long, default_value = ".")]
+        dir: String,
     },
 }
 
@@ -347,8 +358,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             app.handle_command(AppCommand::StopMonitor).await?;
             info!("监控已停止");
         }
-        Command::Monitor { duration_secs } => {
+        Command::Monitor {
+            duration_secs,
+            auto_download_ppt,
+        } => {
             let mut rx = app.subscribe_events();
+            let mut downloaded_presentations = std::collections::HashSet::new();
             app.handle_command(AppCommand::StartMonitor).await?;
             if let Some(secs) = duration_secs {
                 info!("监控已启动，持续 {secs} 秒。按 Ctrl+C 可提前退出。");
@@ -366,13 +381,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     maybe_event = rx.recv() => {
                         if let Some(event) = maybe_event {
                             match &event {
+                                rca_core::app::AppEvent::Notification(n) => {
+                                    tracing::info!("System Notification - {}: {}", n.title, n.body);
+                                }
                                 rca_core::app::AppEvent::StateChanged(state) => {
                                     if let Some(err) = state.last_error.as_deref() {
                                         tracing::error!("Core Engine Error: {}", err);
                                     }
                                 }
-                                rca_core::app::AppEvent::Notification(n) => {
-                                    tracing::info!("System Notification - {}: {}", n.title, n.body);
+                                rca_core::app::AppEvent::PresentationDiscovered {
+                                    lesson_id,
+                                    presentation_id,
+                                } => {
+                                    if auto_download_ppt
+                                        && !downloaded_presentations.contains(presentation_id)
+                                    {
+                                        downloaded_presentations.insert(*presentation_id);
+                                        let pres_id = *presentation_id;
+                                        let lid = lesson_id.0.get();
+                                        let app_clone = app.clone();
+                                        info!("自动下载新发现的 PPT: {}", pres_id);
+                                        tokio::spawn(async move {
+                                            let _ = app_clone
+                                                .handle_command(AppCommand::DownloadPresentation {
+                                                    presentation_id: pres_id,
+                                                    lesson_id: Some(lid),
+                                                    save_dir: std::path::PathBuf::from("./out"),
+                                                })
+                                                .await;
+                                        });
+                                    }
                                 }
                                 rca_core::app::AppEvent::UpdateAvailable { version, url } => {
                                     tracing::info!("发现新版本: {} ({})", version, url);
@@ -423,7 +461,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                 // Title case the tenant for uniform config behavior across UI/CLI.
                 let tenant = match tenant.to_lowercase().as_str() {
-                    "rain" => "雨课堂".to_string(),
+                    "rain" => "Rain".to_string(),
                     "hetang" => "Hetang".to_string(),
                     "yangtze" => "Yangtze".to_string(),
                     "yellow-river" => "YellowRiver".to_string(),
@@ -442,6 +480,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         },
+        Command::DownloadPpt {
+            presentation_id,
+            lesson_id,
+            dir,
+        } => {
+            let save_dir = std::path::PathBuf::from(dir);
+            app.handle_command(AppCommand::DownloadPresentation {
+                presentation_id,
+                lesson_id,
+                save_dir,
+            })
+            .await?;
+        }
     }
 
     Ok(())
