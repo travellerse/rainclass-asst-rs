@@ -10,6 +10,7 @@ use crate::storage::{AppConfig, ConfigRepository, SessionRecord, SessionReposito
 pub struct AppPaths {
     pub config_file: PathBuf,
     pub session_file: PathBuf,
+    pub log_dir: PathBuf,
 }
 
 impl AppPaths {
@@ -20,9 +21,11 @@ impl AppPaths {
             })?;
 
         let config_dir = project_dirs.config_dir().to_path_buf();
+        let log_dir = project_dirs.data_local_dir().join("logs");
         Ok(Self {
             config_file: config_dir.join("config.json"),
             session_file: config_dir.join("session.json"),
+            log_dir,
         })
     }
 }

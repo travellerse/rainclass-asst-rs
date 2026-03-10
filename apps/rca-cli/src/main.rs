@@ -23,7 +23,6 @@ use rca_infra::storage::{
 use rca_infra::update::GithubReleaseChecker;
 use tokio::time::{Duration, Instant, sleep};
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(name = "rca-cli", about = "RainClassroom Assistant CLI")]
@@ -217,11 +216,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let default_level = if cli.verbose { "debug" } else { "info" };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level)),
-        )
-        .init();
+    let log_dir = match rca_infra::storage::AppPaths::detect() {
+        Ok(paths) => paths.log_dir,
+        Err(_) => std::env::current_dir().unwrap_or_default().join("logs"),
+    };
+    let _log_guards = rca_infra::log::init_logger(log_dir, default_level);
 
     let app = bootstrap_app().await?;
 

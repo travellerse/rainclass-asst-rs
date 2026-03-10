@@ -4,7 +4,6 @@ use std::error::Error;
 use std::sync::Arc;
 
 use rca_core::app::{AppCommand, AppConfigDto, AppQueryResult, AppService};
-use tracing_subscriber::EnvFilter;
 
 slint::include_modules!();
 
@@ -46,11 +45,11 @@ fn spawn_command(
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let log_dir = match rca_infra::storage::AppPaths::detect() {
+        Ok(paths) => paths.log_dir,
+        Err(_) => std::env::current_dir().unwrap_or_default().join("logs"),
+    };
+    let _log_guards = rca_infra::log::init_logger(log_dir, "info");
 
     // ── Bootstrap controller & UI ──
     let controller = Arc::new(AppController::bootstrap()?);

@@ -23,6 +23,8 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
 tracing.workspace = true
+tracing-appender = "0.2.4"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
 url.workspace = true
 
 [dev-dependencies]
