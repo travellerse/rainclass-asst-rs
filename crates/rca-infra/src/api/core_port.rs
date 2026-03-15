@@ -1406,47 +1406,44 @@ impl ApiPort for YktApiPort {
 
         use printpdf::*;
         use std::fs::File;
+        use std::io::Write;
 
         let width_mm = Mm((width as f32) * 25.4 / 96.0);
         let height_mm = Mm((height as f32) * 25.4 / 96.0);
 
-        let (doc, page1, layer1) = PdfDocument::new(title, width_mm, height_mm, "Layer 1");
+        let mut doc = PdfDocument::new(title);
+        let mut warnings = Vec::new();
 
-        for (i, bytes) in image_bytes_results.into_iter().enumerate() {
-            let dynamic_img = ::image::load_from_memory(&bytes).map_err(|e| {
-                ApiPortError::request("decode image from memory", format!("{:?}", e))
-            })?;
+        for bytes in image_bytes_results {
+            let raw_img = RawImage::decode_from_bytes(&bytes, &mut warnings)
+                .map_err(|e| ApiPortError::request("decode image from memory", e))?;
 
-            let img = printpdf::Image::from_dynamic_image(&dynamic_img);
+            let img_id = doc.add_image(&raw_img);
 
-            let current_layer = if i == 0 {
-                doc.get_page(page1).get_layer(layer1)
-            } else {
-                let (new_page, new_layer) = doc.add_page(width_mm, height_mm, "Layer 1");
-                doc.get_page(new_page).get_layer(new_layer)
-            };
-
-            let img_width_mm = Mm((dynamic_img.width() as f32) * 25.4 / 96.0);
-            let img_height_mm = Mm((dynamic_img.height() as f32) * 25.4 / 96.0);
+            let img_width_mm = Mm((raw_img.width as f32) * 25.4 / 96.0);
+            let img_height_mm = Mm((raw_img.height as f32) * 25.4 / 96.0);
             let scale_x = width_mm.0 / img_width_mm.0;
             let scale_y = height_mm.0 / img_height_mm.0;
 
-            img.add_to_layer(
-                current_layer,
-                ImageTransform {
-                    translate_x: Some(Mm(0.0)),
-                    translate_y: Some(Mm(0.0)),
+            let page_ops = vec![Op::UseXobject {
+                id: img_id,
+                transform: XObjectTransform {
+                    translate_x: Some(Pt(0.0)),
+                    translate_y: Some(Pt(0.0)),
                     rotate: None,
                     scale_x: Some(scale_x),
                     scale_y: Some(scale_y),
-                    dpi: None,
+                    dpi: Some(96.0),
                 },
-            );
+            }];
+
+            doc.pages.push(PdfPage::new(width_mm, height_mm, page_ops));
         }
         let mut file = std::io::BufWriter::new(
             File::create(&save_path).map_err(|e| ApiPortError::request("open pdf file", e))?,
         );
-        doc.save(&mut file)
+        let pdf_bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
+        file.write_all(&pdf_bytes)
             .map_err(|e| ApiPortError::request("save pdf", e))?;
 
         Ok(save_path)

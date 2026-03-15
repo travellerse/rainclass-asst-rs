@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use rand::Rng;
+use rand::RngExt;
 
 /// Strategy for how long to wait before submitting an auto-answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
