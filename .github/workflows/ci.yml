@@ -10,9 +10,46 @@ on:
       - ".cargo/config.toml"
       - ".github/workflows/ci.yml"
   pull_request:
+    paths:
+      - "apps/**"
+      - "crates/**"
+      - "xtask/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - ".github/workflows/ci.yml"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo xtask fmt --check
+
+      - name: Clippy
+        run: cargo xtask clippy --locked
+
   build-and-test:
+    needs: lint
     strategy:
       fail-fast: false
       matrix:
@@ -34,15 +71,6 @@ jobs:
 
       - name: Cargo cache
         uses: Swatinem/rust-cache@v2
-
-      - name: Format check
-        run: cargo xtask fmt --check
-
-      - name: Clippy
-        run: cargo xtask clippy --locked
-
-      - name: Build
-        run: cargo xtask build --locked
 
       - name: Unit tests
         run: cargo xtask test --locked --lenient-desktop
