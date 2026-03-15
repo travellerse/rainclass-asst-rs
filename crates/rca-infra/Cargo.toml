@@ -37,7 +37,7 @@ tokio-tungstenite = { version = "0.28.0", features = [
 ] }
 tracing.workspace = true
 tracing-appender = "0.2.4"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url.workspace = true
 rust-i18n.workspace = true
 
@@ -45,4 +45,4 @@ rust-i18n.workspace = true
 mockall = "0.14"
 tempfile = "3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-mockito = "1.4"
+mockito = "1.7"
