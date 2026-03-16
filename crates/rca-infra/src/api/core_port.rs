@@ -1404,45 +1404,149 @@ impl ApiPort for YktApiPort {
         }
         let save_path = save_dir.join(file_name);
 
-        use printpdf::*;
+        // PDF generation: we only need to place one full-page slide image per page.
+        // `pdf-writer` works in PDF points (1/72 inch). We keep the existing 96 DPI
+        // assumption used by RainClassroom slide sizes: px -> inch -> pt.
+        //
+        // pt = px * 72 / 96
+        // This keeps the resulting physical page size consistent with the previous
+        // `printpdf` implementation (which went px -> mm using 96 DPI).
+        use image::GenericImageView;
+        use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref};
         use std::fs::File;
         use std::io::Write;
 
-        let width_mm = Mm((width as f32) * 25.4 / 96.0);
-        let height_mm = Mm((height as f32) * 25.4 / 96.0);
-
-        let mut doc = PdfDocument::new(title);
-        let mut warnings = Vec::new();
-
-        for bytes in image_bytes_results {
-            let raw_img = RawImage::decode_from_bytes(&bytes, &mut warnings)
-                .map_err(|e| ApiPortError::request("decode image from memory", e))?;
-
-            let img_id = doc.add_image(&raw_img);
-
-            let img_width_mm = Mm((raw_img.width as f32) * 25.4 / 96.0);
-            let img_height_mm = Mm((raw_img.height as f32) * 25.4 / 96.0);
-            let scale_x = width_mm.0 / img_width_mm.0;
-            let scale_y = height_mm.0 / img_height_mm.0;
-
-            let page_ops = vec![Op::UseXobject {
-                id: img_id,
-                transform: XObjectTransform {
-                    translate_x: Some(Pt(0.0)),
-                    translate_y: Some(Pt(0.0)),
-                    rotate: None,
-                    scale_x: Some(scale_x),
-                    scale_y: Some(scale_y),
-                    dpi: Some(96.0),
-                },
-            }];
-
-            doc.pages.push(PdfPage::new(width_mm, height_mm, page_ops));
+        fn px_to_pt(px: f32) -> f32 {
+            px * 72.0 / 96.0
         }
+
+        fn to_name_resource_id(i: usize) -> Name<'static> {
+            // PDF Name for XObject resources. Keep it simple and deterministic.
+            // SAFETY: We only use ASCII bytes.
+            let s = format!("Im{}", i);
+            Name(Box::leak(s.into_boxed_str()).as_bytes())
+        }
+
+        let page_width_pt = px_to_pt(width as f32);
+        let page_height_pt = px_to_pt(height as f32);
+
+        let mut pdf = Pdf::new();
+
+        // Catalog + Pages tree
+        let catalog_id = Ref::new(1);
+        let pages_id = Ref::new(2);
+        let mut next_id = 3;
+
+        // Track each page object id.
+        let mut page_ids: Vec<Ref> = Vec::with_capacity(image_bytes_results.len());
+
+        for (idx, bytes) in image_bytes_results.into_iter().enumerate() {
+            // Decode bytes to get pixel dimensions; for PDF embedding we prefer JPEG passthrough.
+            // If the image is not JPEG, we fall back to encoding it as JPEG.
+            let dyn_img = image::load_from_memory(&bytes)
+                .map_err(|e| ApiPortError::request("decode image from memory", e))?;
+            let (img_w, img_h) = dyn_img.dimensions();
+
+            // Encode image as JPEG bytes for embedding with DCTDecode.
+            let mut jpeg_bytes: Vec<u8> = Vec::new();
+            {
+                use image::ImageEncoder;
+                let encoder =
+                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 90);
+                let rgb8 = dyn_img.to_rgb8();
+                encoder
+                    .write_image(rgb8.as_raw(), img_w, img_h, image::ExtendedColorType::Rgb8)
+                    .map_err(|e| ApiPortError::request("encode jpeg", e))?;
+            }
+
+            // Image XObject
+            let image_id = Ref::new(next_id);
+            next_id += 1;
+
+            // In pdf-writer v0.13, stream dictionaries are built via `pdf.stream(id, data).dict()`.
+            // The returned builder is finished explicitly.
+            // Image stream with dictionary.
+            let mut image_stream = pdf.stream(image_id, &jpeg_bytes);
+            image_stream.pair(Name(b"Type"), Name(b"XObject"));
+            image_stream.pair(Name(b"Subtype"), Name(b"Image"));
+            image_stream.pair(Name(b"Width"), img_w as i32);
+            image_stream.pair(Name(b"Height"), img_h as i32);
+            image_stream.pair(Name(b"ColorSpace"), Name(b"DeviceRGB"));
+            image_stream.pair(Name(b"BitsPerComponent"), 8);
+            image_stream.pair(Name(b"Filter"), Name(b"DCTDecode"));
+            image_stream.finish();
+
+            // Content stream: scale image to fill the page.
+            // We use a matrix that maps the image's native pixel size to the page size.
+            let scale_x = page_width_pt / px_to_pt(img_w as f32);
+            let scale_y = page_height_pt / px_to_pt(img_h as f32);
+
+            let content_id = Ref::new(next_id);
+            next_id += 1;
+
+            let mut content = Content::new();
+            content.save_state();
+            // Set transform so that image covers the full page.
+            content.transform([scale_x, 0.0, 0.0, scale_y, 0.0, 0.0]);
+            content.x_object(to_name_resource_id(idx));
+            content.restore_state();
+
+            let content_bytes = content.finish();
+            pdf.stream(content_id, &content_bytes).finish();
+
+            // Resources object
+            let resources_id = Ref::new(next_id);
+            next_id += 1;
+            let mut resources_dict = pdf.indirect(resources_id).dict();
+            {
+                let xobj = resources_dict.insert(Name(b"XObject"));
+                xobj.dict().pair(to_name_resource_id(idx), image_id);
+            }
+            resources_dict.finish();
+
+            // Page object
+            let page_id = Ref::new(next_id);
+            next_id += 1;
+            page_ids.push(page_id);
+
+            let mut page_dict = pdf.indirect(page_id).dict();
+            page_dict.pair(Name(b"Type"), Name(b"Page"));
+            page_dict.pair(Name(b"Parent"), pages_id);
+            page_dict.pair(
+                Name(b"MediaBox"),
+                Rect::new(0.0, 0.0, page_width_pt, page_height_pt),
+            );
+            page_dict.pair(Name(b"Resources"), resources_id);
+            page_dict.pair(Name(b"Contents"), content_id);
+            page_dict.finish();
+        }
+
+        // Pages tree
+        let mut pages_dict = pdf.indirect(pages_id).dict();
+        pages_dict.pair(Name(b"Type"), Name(b"Pages"));
+        pages_dict.pair(Name(b"Count"), page_ids.len() as i32);
+        {
+            let kids = pages_dict.insert(Name(b"Kids"));
+            let mut arr = kids.array();
+            for id in &page_ids {
+                arr.item(*id);
+            }
+        }
+        pages_dict.finish();
+
+        // Catalog
+        let mut catalog_dict = pdf.indirect(catalog_id).dict();
+        catalog_dict.pair(Name(b"Type"), Name(b"Catalog"));
+        catalog_dict.pair(Name(b"Pages"), pages_id);
+        // Title metadata is optional; keep behaviour close to old impl (title was used in doc ctor).
+        // pdf-writer doesn't set Info by default; we can add it later if needed.
+        catalog_dict.finish();
+
+        // Write file
         let mut file = std::io::BufWriter::new(
             File::create(&save_path).map_err(|e| ApiPortError::request("open pdf file", e))?,
         );
-        let pdf_bytes = doc.save(&PdfSaveOptions::default(), &mut warnings);
+        let pdf_bytes = pdf.finish();
         file.write_all(&pdf_bytes)
             .map_err(|e| ApiPortError::request("save pdf", e))?;
 

@@ -17,7 +17,7 @@ notify-rust = "4.12.0"
 rca-core = { version = "0.1.0", path = "../rca-core" }
 reqwest = { version = "0.13.2", features = ["json", "rustls"] }
 semver = "1.0.27"
-printpdf = "0.9"
+pdf-writer = "0.13"
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
     "png",
