@@ -88,9 +88,9 @@ impl YktApiPort {
     fn session_headers(&self, session: &AuthSession) -> Result<HeaderMap, ApiError> {
         let mut headers = HeaderMap::new();
         let cookie = format!("sessionid={}", session.access_token);
-        tracing::debug!(
-            "sending cookie: sessionid=***{}",
-            &session.access_token[session.access_token.len().saturating_sub(4)..]
+        tracing::trace!(
+            token_len = session.access_token.len(),
+            "attaching session cookie"
         );
         headers.insert(
             COOKIE,
@@ -278,8 +278,25 @@ impl YktApiPort {
         let lesson_token = lesson_token.ok_or(ApiError::MissingField(
             "lessonToken (tried 3 times but failed)",
         ))?;
-        tracing::debug!("WebSocket bearer acquired: {}", bearer_token);
-        tracing::debug!("WebSocket lesson token acquired: {}", lesson_token);
+        fn redact_token(token: &str) -> String {
+            let t = token.trim();
+            if t.is_empty() {
+                return String::new();
+            }
+            if t.len() <= 12 {
+                return format!("{}***", &t[..t.len().min(4)]);
+            }
+            let head = &t[..4];
+            let tail = &t[t.len() - 4..];
+            format!("{head}***{tail}")
+        }
+        tracing::debug!(
+            bearer = %redact_token(&bearer_token),
+            bearer_len = bearer_token.len(),
+            lesson_token = %redact_token(&lesson_token),
+            lesson_token_len = lesson_token.len(),
+            "websocket auth acquired"
+        );
 
         let user_url = format!("https://{}/api/v3/user/basic-info", self.host);
         let user_value: Value = self
@@ -314,6 +331,16 @@ impl RainClassroomWs for YktApiPort {
         let (user_id, bearer_token, lesson_token) =
             self.prepare_lesson_ws_auth(auth, lesson_id).await?;
 
+        let span = tracing::info_span!(
+            target: "rca_infra.ws",
+            "connect_lesson_stream",
+            host = %self.host,
+            lesson_id = lesson_id,
+            user_id = user_id,
+            has_bearer = !bearer_token.is_empty()
+        );
+        let _enter = span.enter();
+
         let ws_url = format!("wss://{}/wsapp/", self.host);
         let mut request = ws_url
             .into_client_request()
@@ -343,6 +370,7 @@ impl RainClassroomWs for YktApiPort {
                 .map_err(|err| ApiError::invalid_header("origin", err))?,
         );
 
+        tracing::info!("connecting lesson ws");
         let (mut socket, _) = connect_async(request)
             .await
             .map_err(|err| ApiError::ws_connect(err.to_string()))?;
@@ -355,11 +383,16 @@ impl RainClassroomWs for YktApiPort {
             "lessonid": lesson_id.to_string(),
         })
         .to_string();
-        tracing::debug!("Sending initial WS message: {}", hello);
+        tracing::debug!(
+            op = "hello",
+            bytes = hello.len(),
+            "sending initial ws message"
+        );
         socket
             .send(Message::Text(hello.into()))
             .await
             .map_err(|err| ApiError::ws_send(format!("send hello failed: {err}")))?;
+        tracing::info!("lesson ws connected");
 
         let (tx, rx) = mpsc::channel::<Result<WsEventDto, ApiError>>(128);
         tokio::spawn(async move {
@@ -367,8 +400,11 @@ impl RainClassroomWs for YktApiPort {
                 let text = match frame {
                     Ok(Message::Text(text)) => text.to_string(),
                     Ok(Message::Binary(bin)) => String::from_utf8_lossy(&bin).to_string(),
+                    Ok(Message::Ping(_)) => continue,
+                    Ok(Message::Pong(_)) => continue,
+                    Ok(Message::Close(_)) => break,
                     Ok(_) => {
-                        tracing::debug!("Received non-text/binary WS frame, continuing...");
+                        tracing::trace!("Received non-data WS frame, continuing...");
                         continue;
                     }
                     Err(err) => {
@@ -384,11 +420,10 @@ impl RainClassroomWs for YktApiPort {
                     }
                 };
 
-                tracing::debug!("Received WS message: {}", text);
-
                 let value: Value = match serde_json::from_str(&text) {
                     Ok(v) => v,
                     Err(_) => {
+                        tracing::debug!(raw_len = text.len(), "invalid ws json payload");
                         let _ = tx
                             .send(Ok(WsEventDto::Unknown {
                                 raw_type: "invalid_json".to_string(),
@@ -399,6 +434,7 @@ impl RainClassroomWs for YktApiPort {
                     }
                 };
                 let op = value.get("op").and_then(Value::as_str).unwrap_or("unknown");
+                tracing::trace!(op = op, raw_len = text.len(), "ws message received");
 
                 let mapped = match op {
                     "showpresentation" => {
@@ -974,6 +1010,12 @@ impl ApiPort for YktApiPort {
         self.update_qr_state(&scene_id, QrSceneState::Pending);
 
         let ws_url = format!("wss://{}/wsapp/", self.host);
+        tracing::info!(
+            target: "rca_infra.api",
+            host = %self.host,
+            scene_id = %scene_id,
+            "starting qr login"
+        );
         let scene_for_task = scene_id.clone();
         let host = self.host.clone();
         let user_agent = self.user_agent.clone();
@@ -984,7 +1026,16 @@ impl ApiPort for YktApiPort {
             oneshot::channel::<Result<QrLoginBootstrap, ApiPortError>>();
 
         tokio::spawn(async move {
+            let span = tracing::info_span!(
+                target: "rca_infra.api",
+                "qr_login_task",
+                host = %host,
+                scene_id = %scene_for_task
+            );
+            let _enter = span.enter();
+
             let mut bootstrap_tx = Some(bootstrap_tx);
+            tracing::info!(ws_url = %ws_url, "connecting wsapp");
             let (mut socket, _) = match connect_async(&ws_url).await {
                 Ok(pair) => pair,
                 Err(err) => {
@@ -1010,6 +1061,7 @@ impl ApiPort for YktApiPort {
             })
             .to_string();
 
+            tracing::info!("requesting qr ticket");
             if let Err(err) = socket.send(Message::Text(req.into())).await {
                 Self::update_qr_state_shared(
                     &states,
@@ -1070,6 +1122,7 @@ impl ApiPort for YktApiPort {
                     }
 
                     bootstrap_sent = true;
+                    tracing::info!("qr ticket received");
                     if let Some(sender) = bootstrap_tx.take() {
                         let _ = sender.send(Ok(QrLoginBootstrap {
                             scene_id: scene_for_task.clone(),
@@ -1102,6 +1155,7 @@ impl ApiPort for YktApiPort {
                     }
 
                     let login_url = format!("https://{host}/pc/web_login");
+                    tracing::info!(user_id = user_id, "exchanging web_login session");
                     let response = match client
                         .post(login_url)
                         .header(USER_AGENT, &user_agent)
@@ -1122,6 +1176,7 @@ impl ApiPort for YktApiPort {
                     };
 
                     if !response.status().is_success() {
+                        tracing::warn!(http_status = %response.status(), "web_login failed");
                         Self::update_qr_state_shared(
                             &states,
                             &state_notify,
@@ -1134,6 +1189,7 @@ impl ApiPort for YktApiPort {
                     let sessionid = match Self::extract_session_id(response.headers()) {
                         Some(cookie) => cookie,
                         None => {
+                            tracing::warn!("web_login succeeded but sessionid missing");
                             Self::update_qr_state_shared(
                                 &states,
                                 &state_notify,
@@ -1157,6 +1213,7 @@ impl ApiPort for YktApiPort {
                         &scene_for_task,
                         QrSceneState::Confirmed(session),
                     );
+                    tracing::info!(user_id = user_id, "login confirmed");
                     return;
                 }
             }
@@ -1262,12 +1319,22 @@ impl ApiPort for YktApiPort {
         lesson_id: Option<u64>,
         save_dir: &std::path::Path,
     ) -> Result<std::path::PathBuf, ApiPortError> {
+        let started_at = tokio::time::Instant::now();
+        let span = tracing::info_span!(
+            target: "rca_infra.api",
+            "download_presentation",
+            host = %self.host,
+            presentation_id = presentation_id,
+            lesson_id = ?lesson_id
+        );
+        let _enter = span.enter();
+
         let mut headers = self
             .session_headers(session)
             .map_err(ApiPortError::protocol)?;
 
         if let Some(lid) = lesson_id {
-            tracing::info!("performing check-in for lesson {}", lid);
+            tracing::info!(lesson_id = lid, "performing lesson check-in");
             let checkin_url = format!("https://{}/api/v3/lesson/checkin", self.host);
             let response = self
                 .client
@@ -1287,7 +1354,7 @@ impl ApiPort for YktApiPort {
                 .or_else(|| response.headers().get("Set-Auth"))
                 && let Ok(bearer) = auth_val.to_str()
             {
-                tracing::info!("acquired lesson bearer token");
+                tracing::info!(lesson_id = lid, "acquired lesson bearer token");
                 headers.insert(
                     AUTHORIZATION,
                     HeaderValue::from_str(&format!("Bearer {}", bearer)).unwrap(),
@@ -1295,11 +1362,11 @@ impl ApiPort for YktApiPort {
             }
         }
 
+        tracing::info!("fetching presentation metadata");
         let fetch_url = format!(
             "https://{}/api/v3/lesson/presentation/fetch?presentation_id={}",
             self.host, presentation_id
         );
-        tracing::info!("presentation fetch URL: {}", fetch_url);
         let response = self
             .client
             .get(&fetch_url)
@@ -1309,6 +1376,7 @@ impl ApiPort for YktApiPort {
             .map_err(|err| ApiPortError::request("presentation fetch", err))?;
 
         let status = response.status();
+        tracing::info!(http_status = %status, "presentation metadata response");
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiPortError::protocol(
                 "unauthorized: presentation fetch requires login",
@@ -1326,9 +1394,9 @@ impl ApiPort for YktApiPort {
 
         let presentation_value: Value = serde_json::from_str(&response_text).map_err(|err| {
             tracing::error!(
-                "presentation fetch decode failed. status: {}, response: {}",
-                status,
-                response_text
+                http_status = %status,
+                response_len = response_text.len(),
+                "presentation fetch decode failed"
             );
             ApiPortError::request("presentation fetch decode", err)
         })?;
@@ -1354,6 +1422,12 @@ impl ApiPort for YktApiPort {
                 "missing slides array in presentation data",
             ));
         };
+        tracing::info!(
+            slides = slides.len(),
+            width_px = width,
+            height_px = height,
+            "presentation metadata parsed"
+        );
 
         let mut slide_urls = Vec::new();
         for slide in slides {
@@ -1369,9 +1443,11 @@ impl ApiPort for YktApiPort {
                 "no slide images found in presentation",
             ));
         }
+        tracing::info!(slide_images = slide_urls.len(), "downloading slide images");
 
         let mut image_bytes_results = Vec::with_capacity(slide_urls.len());
         let chunk_size = 10;
+        let download_started_at = tokio::time::Instant::now();
         for chunk in slide_urls.chunks(chunk_size) {
             let mut tasks = Vec::new();
             for url in chunk {
@@ -1389,6 +1465,11 @@ impl ApiPort for YktApiPort {
                 image_bytes_results.push(bytes);
             }
         }
+        tracing::info!(
+            slide_images = image_bytes_results.len(),
+            elapsed_ms = download_started_at.elapsed().as_millis(),
+            "slide images downloaded"
+        );
 
         let safe_title = title.replace(&['/', '\\', ':', '*', '?', '"', '<', '>', '|'][..], "_");
         let safe_title = safe_title.replace(" ", "_");
@@ -1403,6 +1484,7 @@ impl ApiPort for YktApiPort {
                 .map_err(|e| ApiPortError::request("create save dir", e))?;
         }
         let save_path = save_dir.join(file_name);
+        tracing::info!(path = %save_path.display(), "generating pdf");
 
         // PDF generation: we only need to place one full-page slide image per page.
         // `pdf-writer` works in PDF points (1/72 inch). We keep the existing 96 DPI
@@ -1463,9 +1545,6 @@ impl ApiPort for YktApiPort {
             let image_id = Ref::new(next_id);
             next_id += 1;
 
-            // In pdf-writer v0.13, stream dictionaries are built via `pdf.stream(id, data).dict()`.
-            // The returned builder is finished explicitly.
-            // Image stream with dictionary.
             let mut image_stream = pdf.stream(image_id, &jpeg_bytes);
             image_stream.pair(Name(b"Type"), Name(b"XObject"));
             image_stream.pair(Name(b"Subtype"), Name(b"Image"));
@@ -1477,17 +1556,13 @@ impl ApiPort for YktApiPort {
             image_stream.finish();
 
             // Content stream: scale image to fill the page.
-            // We use a matrix that maps the image's native pixel size to the page size.
-            let scale_x = page_width_pt / px_to_pt(img_w as f32);
-            let scale_y = page_height_pt / px_to_pt(img_h as f32);
-
             let content_id = Ref::new(next_id);
             next_id += 1;
 
             let mut content = Content::new();
             content.save_state();
             // Set transform so that image covers the full page.
-            content.transform([scale_x, 0.0, 0.0, scale_y, 0.0, 0.0]);
+            content.transform([page_width_pt, 0.0, 0.0, page_height_pt, 0.0, 0.0]);
             content.x_object(to_name_resource_id(idx));
             content.restore_state();
 
@@ -1500,7 +1575,9 @@ impl ApiPort for YktApiPort {
             let mut resources_dict = pdf.indirect(resources_id).dict();
             {
                 let xobj = resources_dict.insert(Name(b"XObject"));
-                xobj.dict().pair(to_name_resource_id(idx), image_id);
+                let mut xobj_dict = xobj.dict();
+                xobj_dict.pair(to_name_resource_id(idx), image_id);
+                xobj_dict.finish();
             }
             resources_dict.finish();
 
@@ -1531,6 +1608,7 @@ impl ApiPort for YktApiPort {
             for id in &page_ids {
                 arr.item(*id);
             }
+            arr.finish();
         }
         pages_dict.finish();
 
@@ -1550,6 +1628,12 @@ impl ApiPort for YktApiPort {
         file.write_all(&pdf_bytes)
             .map_err(|e| ApiPortError::request("save pdf", e))?;
 
+        tracing::info!(
+            pages = page_ids.len(),
+            bytes = pdf_bytes.len(),
+            elapsed_ms = started_at.elapsed().as_millis(),
+            "pdf saved"
+        );
         Ok(save_path)
     }
 

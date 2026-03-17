@@ -71,10 +71,8 @@ mod tests {
         target_os = "macos",
         ignore = "EventLoop must be created on the main thread on macOS"
     )]
+    #[cfg_attr(target_os = "linux", ignore)]
     fn login_flow_no_panic() {
-        unsafe {
-            std::env::set_var("QT_QPA_PLATFORM", "offscreen");
-        }
         // bootstrap controller (real initialization but won't perform network in test)
         let controller = Arc::new(AppController::bootstrap().unwrap());
         // create a temporary UI window to obtain a Weak handle

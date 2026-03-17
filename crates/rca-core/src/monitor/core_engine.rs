@@ -18,6 +18,12 @@ pub struct CoreMonitorEngine {
     state: Arc<Mutex<EngineState>>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ProblemSource {
+    Ppt,
+    Ws,
+}
+
 struct EngineState {
     event_tx: tokio::sync::broadcast::Sender<CoreEvent>,
     runtime: Option<EngineRuntime>,
@@ -32,6 +38,7 @@ struct LessonState {
     answered_problems: HashSet<u64>,
     checked_checkins: HashSet<u64>,
     danmu_tracker: crate::monitor::DanmuTracker,
+    current_presentation_id: Option<u64>,
 }
 
 impl CoreMonitorEngine {
@@ -113,13 +120,27 @@ impl CoreMonitorEngine {
         state: &mut LessonState,
         event: (LessonWsEvent, &tokio::sync::broadcast::Sender<CoreEvent>),
         cfg: &MonitorConfig,
+        source: ProblemSource,
     ) {
         let auto_answer_enabled = cfg.auto_answer_enabled;
         let auto_checkin_enabled = cfg.auto_checkin_enabled;
 
         match event.0 {
             LessonWsEvent::ProblemPublished { problem } => {
-                tracing::info!("收到题目：{}", problem.title);
+                tracing::info!(
+                    lesson_id = lesson.lesson_id.0.get(),
+                    problem_id = problem.problem_id.0.get(),
+                    source = ?source,
+                    problem_type = ?problem.problem_type,
+                    title = %problem.title,
+                    correct_answers = ?problem.correct_answers,
+                    blanks = ?problem
+                        .blanks
+                        .iter()
+                        .map(|b| b.accepted_values.clone())
+                        .collect::<Vec<_>>(),
+                    "problem discovered"
+                );
                 let _ = event.1.send(CoreEvent::ProblemDiscovered {
                     problem: problem.clone(),
                 });
@@ -144,6 +165,8 @@ impl CoreMonitorEngine {
                     tokio::spawn(async move {
                         if delay > Duration::ZERO {
                             tracing::info!(
+                                lesson_id = lesson_id.0.get(),
+                                problem_id = problem_id.0.get(),
                                 "等待 {:?} 后提交答案 (策略: {:?})",
                                 delay,
                                 delay_strategy
@@ -173,9 +196,9 @@ impl CoreMonitorEngine {
             }
             LessonWsEvent::CheckinOpened { checkin_id } => {
                 tracing::info!(
-                    "签到开启: lesson={} checkin={}",
-                    lesson.lesson_id.0.get(),
-                    checkin_id.0.get()
+                    lesson_id = lesson.lesson_id.0.get(),
+                    checkin_id = checkin_id.0.get(),
+                    "checkin opened"
                 );
                 let _ = event.1.send(CoreEvent::CheckinDiscovered {
                     lesson_id: lesson.lesson_id,
@@ -203,11 +226,16 @@ impl CoreMonitorEngine {
                 }
             }
             LessonWsEvent::PresentationUpdated { presentation_id } => {
+                let prev = state.current_presentation_id;
+                let changed = prev != Some(presentation_id);
                 tracing::info!(
-                    "Presentation updated: presentation_id={} lesson_id={}",
-                    presentation_id,
-                    lesson.lesson_id.0.get()
+                    lesson_id = lesson.lesson_id.0.get(),
+                    prev_presentation_id = ?prev,
+                    presentation_id = presentation_id,
+                    changed = changed,
+                    "presentation updated"
                 );
+                state.current_presentation_id = Some(presentation_id);
                 let _ = event.1.send(CoreEvent::PresentationUpdated {
                     lesson_id: lesson.lesson_id,
                     presentation_id,
@@ -218,12 +246,13 @@ impl CoreMonitorEngine {
                 slide_id,
                 slide_index,
             } => {
+                state.current_presentation_id = Some(presentation_id);
                 tracing::info!(
-                    "Slide Navigated: presentation_id={} slide_index={} slide_id={} lesson_id={}",
-                    presentation_id,
-                    slide_index,
-                    slide_id,
-                    lesson.lesson_id.0.get()
+                    lesson_id = lesson.lesson_id.0.get(),
+                    presentation_id = presentation_id,
+                    slide_index = slide_index,
+                    slide_id = slide_id,
+                    "slide navigated"
                 );
                 let _ = event.1.send(CoreEvent::SlideNavigated {
                     lesson_id: lesson.lesson_id,
@@ -234,9 +263,9 @@ impl CoreMonitorEngine {
             }
             LessonWsEvent::ProblemUnlocked { problem_id } => {
                 tracing::info!(
-                    "Problem Unlocked: problem_id={} lesson_id={}",
-                    problem_id.0.get(),
-                    lesson.lesson_id.0.get()
+                    lesson_id = lesson.lesson_id.0.get(),
+                    problem_id = problem_id.0.get(),
+                    "problem unlocked"
                 );
                 let _ = event.1.send(CoreEvent::ProblemUnlocked {
                     lesson_id: lesson.lesson_id,
@@ -245,9 +274,9 @@ impl CoreMonitorEngine {
             }
             LessonWsEvent::CallPaused { target_name } => {
                 tracing::info!(
-                    "Roll-call initiated: target={} lesson_id={}",
-                    target_name,
-                    lesson.lesson_id.0.get()
+                    lesson_id = lesson.lesson_id.0.get(),
+                    target_name = %target_name,
+                    "call paused"
                 );
                 let _ = event.1.send(CoreEvent::CallPaused {
                     lesson_id: lesson.lesson_id,
@@ -256,10 +285,10 @@ impl CoreMonitorEngine {
             }
             LessonWsEvent::DanmuPublished { user_name, content } => {
                 tracing::info!(
-                    "Danmu received: sender={:?} content={:?} lesson_id={}",
-                    user_name,
-                    content,
-                    lesson.lesson_id.0.get()
+                    lesson_id = lesson.lesson_id.0.get(),
+                    sender = ?user_name,
+                    content = %content,
+                    "danmu received"
                 );
 
                 if cfg.auto_danmu_enabled
@@ -267,7 +296,10 @@ impl CoreMonitorEngine {
                         .danmu_tracker
                         .track_and_decide(&content, cfg.danmu_threshold, 60, 60)
                 {
-                    tracing::info!("Auto-replying to danmu: {:?}", content);
+                    tracing::info!(
+                        lesson_id = lesson.lesson_id.0.get(),
+                        "auto replying to danmu"
+                    );
                     let content_clone = content.clone();
                     let session_clone = session.clone();
                     let lesson_id = lesson.lesson_id;
@@ -294,7 +326,7 @@ impl CoreMonitorEngine {
                 });
             }
             LessonWsEvent::LessonEnded => {
-                tracing::info!("Lesson ended: lesson_id={}", lesson.lesson_id.0.get());
+                tracing::info!(lesson_id = lesson.lesson_id.0.get(), "lesson ended");
                 let _ = event.1.send(CoreEvent::MonitorStopped {
                     at: chrono::Utc::now(),
                 });
@@ -307,7 +339,19 @@ impl CoreMonitorEngine {
                 });
             }
             LessonWsEvent::Unknown { raw_type } => {
-                tracing::debug!("Ignored unknown WS op: {}", raw_type);
+                if raw_type == "showfinished" {
+                    tracing::warn!(
+                        lesson_id = lesson.lesson_id.0.get(),
+                        op = %raw_type,
+                        "unhandled ws op"
+                    );
+                } else {
+                    tracing::trace!(
+                        lesson_id = lesson.lesson_id.0.get(),
+                        op = %raw_type,
+                        "ignored unknown ws op"
+                    );
+                }
             }
         }
     }
@@ -373,6 +417,7 @@ impl MonitorEngine for CoreMonitorEngine {
                         answered_problems: HashSet::new(),
                         checked_checkins: HashSet::new(),
                         danmu_tracker: crate::monitor::DanmuTracker::new(),
+                        current_presentation_id: None,
                     };
 
                     loop {
@@ -402,6 +447,11 @@ impl MonitorEngine for CoreMonitorEngine {
                         };
 
                         if let Ok(history_problems) = api_for_lesson.get_lesson_problems(&session_for_lesson, lesson_clone.lesson_id).await {
+                            tracing::info!(
+                                lesson_id = lesson_clone.lesson_id.0.get(),
+                                problems = history_problems.len(),
+                                "ppt problems loaded"
+                            );
                             for problem in history_problems {
                                 Self::process_lesson_ws_event(
                                     &api_for_lesson,
@@ -410,6 +460,7 @@ impl MonitorEngine for CoreMonitorEngine {
                                     &mut state,
                                     (crate::app::ports::LessonWsEvent::ProblemPublished { problem }, &event_tx_lesson),
                                     &cfg_for_lesson,
+                                    ProblemSource::Ppt,
                                 ).await;
                             }
                         }
@@ -436,6 +487,7 @@ impl MonitorEngine for CoreMonitorEngine {
                                         &mut state,
                                         (event, &event_tx_lesson),
                                         &cfg_for_lesson,
+                                        ProblemSource::Ws,
                                     ).await;
                                 }
                             }
