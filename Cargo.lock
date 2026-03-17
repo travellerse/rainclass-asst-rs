@@ -4904,6 +4904,7 @@ name = "rca-infra"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "directories",
  "futures-core",

@@ -85,6 +85,180 @@ impl YktApiPort {
         })
     }
 
+    fn sanitize_filename_component(input: &str) -> String {
+        // Produce a single safe filename component (no separators, no NUL).
+        // Keep it deterministic and conservative.
+        let replaced = input
+            .replace(['\u{0000}', '/', '\\'], "_")
+            .replace([':', '*', '?', '"', '<', '>', '|'], "_")
+            .trim()
+            .replace(' ', "_");
+
+        // Prevent traversal via dot segments, and avoid empty names.
+        let no_dot_segments = replaced
+            .split('.')
+            .filter(|seg| !seg.is_empty())
+            .collect::<Vec<_>>()
+            .join(".");
+
+        let out = no_dot_segments;
+        if out.is_empty() {
+            "Presentation".to_string()
+        } else {
+            out
+        }
+    }
+
+    fn build_safe_output_path(
+        save_dir: &std::path::Path,
+        file_name: &str,
+    ) -> Result<std::path::PathBuf, std::io::Error> {
+        // Enforce that `file_name` is a single path component.
+        let candidate = std::path::Path::new(file_name);
+        if candidate.file_name().is_none() || candidate.components().count() != 1 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsafe file name",
+            ));
+        }
+
+        let base = save_dir.canonicalize()?;
+        let out = save_dir.join(candidate);
+
+        // Canonicalize parent dir and ensure it stays within base.
+        // NOTE: `out` may not exist yet, so canonicalize its parent.
+        let out_parent = out
+            .parent()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "no parent"))?
+            .canonicalize()?;
+        if !out_parent.starts_with(&base) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path traversal detected",
+            ));
+        }
+
+        Ok(out)
+    }
+
+    /// Build a PDF (bytes) from slide images.
+    ///
+    /// This is shared by the download pipeline and integration tests to ensure
+    /// the generated PDFs remain parseable.
+    pub fn build_presentation_pdf_bytes(
+        width_px: f32,
+        height_px: f32,
+        slide_images: impl IntoIterator<Item = bytes::Bytes>,
+    ) -> Result<Vec<u8>, ApiPortError> {
+        // PDF generation: we only need to place one full-page slide image per page.
+        // `pdf-writer` works in PDF points (1/72 inch). We keep the existing 96 DPI
+        // assumption used by RainClassroom slide sizes: px -> inch -> pt.
+        //
+        // pt = px * 72 / 96
+        use image::GenericImageView;
+        use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref};
+
+        fn px_to_pt(px: f32) -> f32 {
+            px * 72.0 / 96.0
+        }
+
+        fn to_name_resource_id(i: usize) -> Name<'static> {
+            // PDF Name for XObject resources. Keep it simple and deterministic.
+            // SAFETY: We only use ASCII bytes.
+            let s = format!("Im{}", i);
+            Name(Box::leak(s.into_boxed_str()).as_bytes())
+        }
+
+        let page_width_pt = px_to_pt(width_px);
+        let page_height_pt = px_to_pt(height_px);
+
+        let mut pdf = Pdf::new();
+
+        // Catalog + Pages tree
+        let catalog_id = Ref::new(1);
+        let pages_id = Ref::new(2);
+        pdf.catalog(catalog_id).pages(pages_id);
+        let mut next_id = 3;
+
+        let mut page_ids: Vec<Ref> = Vec::new();
+
+        for (idx, bytes) in slide_images.into_iter().enumerate() {
+            let dyn_img = image::load_from_memory(&bytes)
+                .map_err(|e| ApiPortError::request("decode image from memory", e))?;
+            let (img_w, img_h) = dyn_img.dimensions();
+
+            let mut jpeg_bytes: Vec<u8> = Vec::new();
+            {
+                use image::ImageEncoder;
+                let encoder =
+                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 90);
+                let rgb8 = dyn_img.to_rgb8();
+                encoder
+                    .write_image(rgb8.as_raw(), img_w, img_h, image::ExtendedColorType::Rgb8)
+                    .map_err(|e| ApiPortError::request("encode jpeg", e))?;
+            }
+
+            // Image XObject
+            let image_id = Ref::new(next_id);
+            next_id += 1;
+            let mut image_stream = pdf.stream(image_id, &jpeg_bytes);
+            image_stream.pair(Name(b"Type"), Name(b"XObject"));
+            image_stream.pair(Name(b"Subtype"), Name(b"Image"));
+            image_stream.pair(Name(b"Width"), img_w as i32);
+            image_stream.pair(Name(b"Height"), img_h as i32);
+            image_stream.pair(Name(b"ColorSpace"), Name(b"DeviceRGB"));
+            image_stream.pair(Name(b"BitsPerComponent"), 8);
+            image_stream.pair(Name(b"Filter"), Name(b"DCTDecode"));
+            image_stream.finish();
+
+            // Content stream
+            let content_id = Ref::new(next_id);
+            next_id += 1;
+            let mut content = Content::new();
+            content.save_state();
+            content.transform([page_width_pt, 0.0, 0.0, page_height_pt, 0.0, 0.0]);
+            content.x_object(to_name_resource_id(idx));
+            content.restore_state();
+            let content_bytes = content.finish();
+            pdf.stream(content_id, &content_bytes).finish();
+
+            // Resources
+            let resources_id = Ref::new(next_id);
+            next_id += 1;
+            let mut resources_dict = pdf.indirect(resources_id).dict();
+            {
+                let xobj = resources_dict.insert(Name(b"XObject"));
+                let mut xobj_dict = xobj.dict();
+                xobj_dict.pair(to_name_resource_id(idx), image_id);
+                xobj_dict.finish();
+            }
+            resources_dict.finish();
+
+            // Page
+            let page_id = Ref::new(next_id);
+            next_id += 1;
+            page_ids.push(page_id);
+
+            let mut page_dict = pdf.indirect(page_id).dict();
+            page_dict.pair(Name(b"Type"), Name(b"Page"));
+            page_dict.pair(Name(b"Parent"), pages_id);
+            page_dict.pair(
+                Name(b"MediaBox"),
+                Rect::new(0.0, 0.0, page_width_pt, page_height_pt),
+            );
+            page_dict.pair(Name(b"Resources"), resources_id);
+            page_dict.pair(Name(b"Contents"), content_id);
+            page_dict.finish();
+        }
+
+        // Pages tree
+        pdf.pages(pages_id)
+            .kids(page_ids.iter().copied())
+            .count(page_ids.len() as i32);
+
+        Ok(pdf.finish())
+    }
+
     fn session_headers(&self, session: &AuthSession) -> Result<HeaderMap, ApiError> {
         let mut headers = HeaderMap::new();
         let cookie = format!("sessionid={}", session.access_token);
@@ -1355,9 +1529,19 @@ impl ApiPort for YktApiPort {
                 && let Ok(bearer) = auth_val.to_str()
             {
                 tracing::info!(lesson_id = lid, "acquired lesson bearer token");
+                // Defensive: validate format/length to avoid propagating garbage values.
+                let bearer = bearer.trim();
+                if bearer.is_empty() || bearer.len() > 4096 {
+                    return Err(ApiPortError::protocol("invalid set-auth bearer token"));
+                }
+                if bearer.contains('\u{0000}') {
+                    return Err(ApiPortError::protocol("invalid set-auth bearer token"));
+                }
                 headers.insert(
                     AUTHORIZATION,
-                    HeaderValue::from_str(&format!("Bearer {}", bearer)).unwrap(),
+                    HeaderValue::from_str(&format!("Bearer {}", bearer)).map_err(|e| {
+                        ApiPortError::protocol(format!("invalid bearer header: {e}"))
+                    })?,
                 );
             }
         }
@@ -1445,7 +1629,61 @@ impl ApiPort for YktApiPort {
         }
         tracing::info!(slide_images = slide_urls.len(), "downloading slide images");
 
-        let mut image_bytes_results = Vec::with_capacity(slide_urls.len());
+        use bytes::Bytes;
+
+        async fn download_slide_bytes(
+            client: reqwest::Client,
+            url: String,
+        ) -> Result<Bytes, ApiPortError> {
+            use tokio::time::{Duration, sleep, timeout};
+
+            // Keep conservative defaults; can be made configurable later.
+            const PER_SLIDE_TIMEOUT_SECS: u64 = 30;
+            const MAX_RETRIES: usize = 2;
+
+            let mut attempt: usize = 0;
+            loop {
+                attempt += 1;
+                let req_fut = async {
+                    client
+                        .get(&url)
+                        .send()
+                        .await
+                        .map_err(|e| ApiPortError::request("download slide image", e))?
+                        .error_for_status()
+                        .map_err(|e| ApiPortError::request("download slide image HTTP error", e))?
+                        .bytes()
+                        .await
+                        .map_err(|e| ApiPortError::request("download slide image bytes", e))
+                };
+
+                match timeout(Duration::from_secs(PER_SLIDE_TIMEOUT_SECS), req_fut).await {
+                    Ok(Ok(bytes)) => return Ok(bytes),
+                    Ok(Err(err)) => {
+                        if attempt > MAX_RETRIES {
+                            tracing::warn!(attempt, url = %url, "slide download failed (no more retries)");
+                            return Err(err);
+                        }
+                        let backoff = Duration::from_millis(200 * attempt as u64);
+                        tracing::warn!(attempt, url = %url, backoff_ms = backoff.as_millis(), "slide download failed, retrying");
+                        sleep(backoff).await;
+                    }
+                    Err(_) => {
+                        if attempt > MAX_RETRIES {
+                            return Err(ApiPortError::request(
+                                "download slide image timeout",
+                                format!("timeout after {PER_SLIDE_TIMEOUT_SECS}s"),
+                            ));
+                        }
+                        let backoff = Duration::from_millis(200 * attempt as u64);
+                        tracing::warn!(attempt, url = %url, backoff_ms = backoff.as_millis(), "slide download timed out, retrying");
+                        sleep(backoff).await;
+                    }
+                }
+            }
+        }
+
+        let mut image_bytes_results: Vec<Bytes> = Vec::with_capacity(slide_urls.len());
         let chunk_size = 10;
         let download_started_at = tokio::time::Instant::now();
         for chunk in slide_urls.chunks(chunk_size) {
@@ -1454,14 +1692,13 @@ impl ApiPort for YktApiPort {
                 let client = self.client.clone();
                 let url = url.clone();
                 tasks.push(tokio::spawn(async move {
-                    client.get(&url).send().await?.bytes().await
+                    download_slide_bytes(client, url).await
                 }));
             }
             let chunk_results = futures_util::future::join_all(tasks).await;
             for res in chunk_results {
-                let bytes = res
-                    .map_err(|_| ApiPortError::request("tokio join", "task panicked"))?
-                    .map_err(|e| ApiPortError::request("download slide image", e))?;
+                let bytes =
+                    res.map_err(|_| ApiPortError::request("tokio join", "task panicked"))??;
                 image_bytes_results.push(bytes);
             }
         }
@@ -1471,8 +1708,7 @@ impl ApiPort for YktApiPort {
             "slide images downloaded"
         );
 
-        let safe_title = title.replace(&['/', '\\', ':', '*', '?', '"', '<', '>', '|'][..], "_");
-        let safe_title = safe_title.replace(" ", "_");
+        let safe_title = Self::sanitize_filename_component(title);
         let file_name = format!(
             "{}_{}.pdf",
             safe_title,
@@ -1483,153 +1719,40 @@ impl ApiPort for YktApiPort {
                 .await
                 .map_err(|e| ApiPortError::request("create save dir", e))?;
         }
-        let save_path = save_dir.join(file_name);
+        let save_path = Self::build_safe_output_path(save_dir, &file_name)
+            .map_err(|e| ApiPortError::request("build save path", e))?;
         tracing::info!(path = %save_path.display(), "generating pdf");
 
-        // PDF generation: we only need to place one full-page slide image per page.
-        // `pdf-writer` works in PDF points (1/72 inch). We keep the existing 96 DPI
-        // assumption used by RainClassroom slide sizes: px -> inch -> pt.
-        //
-        // pt = px * 72 / 96
-        // This keeps the resulting physical page size consistent with the previous
-        // `printpdf` implementation (which went px -> mm using 96 DPI).
-        use image::GenericImageView;
-        use pdf_writer::{Content, Finish, Name, Pdf, Rect, Ref};
+        // Build PDF bytes using the shared implementation.
+        let pdf_bytes =
+            Self::build_presentation_pdf_bytes(width as f32, height as f32, image_bytes_results)?;
+
+        // Write file atomically: write to a tmp file then rename.
         use std::fs::File;
         use std::io::Write;
-
-        fn px_to_pt(px: f32) -> f32 {
-            px * 72.0 / 96.0
-        }
-
-        fn to_name_resource_id(i: usize) -> Name<'static> {
-            // PDF Name for XObject resources. Keep it simple and deterministic.
-            // SAFETY: We only use ASCII bytes.
-            let s = format!("Im{}", i);
-            Name(Box::leak(s.into_boxed_str()).as_bytes())
-        }
-
-        let page_width_pt = px_to_pt(width as f32);
-        let page_height_pt = px_to_pt(height as f32);
-
-        let mut pdf = Pdf::new();
-
-        // Catalog + Pages tree
-        let catalog_id = Ref::new(1);
-        let pages_id = Ref::new(2);
-        let mut next_id = 3;
-
-        // Track each page object id.
-        let mut page_ids: Vec<Ref> = Vec::with_capacity(image_bytes_results.len());
-
-        for (idx, bytes) in image_bytes_results.into_iter().enumerate() {
-            // Decode bytes to get pixel dimensions; for PDF embedding we prefer JPEG passthrough.
-            // If the image is not JPEG, we fall back to encoding it as JPEG.
-            let dyn_img = image::load_from_memory(&bytes)
-                .map_err(|e| ApiPortError::request("decode image from memory", e))?;
-            let (img_w, img_h) = dyn_img.dimensions();
-
-            // Encode image as JPEG bytes for embedding with DCTDecode.
-            let mut jpeg_bytes: Vec<u8> = Vec::new();
-            {
-                use image::ImageEncoder;
-                let encoder =
-                    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg_bytes, 90);
-                let rgb8 = dyn_img.to_rgb8();
-                encoder
-                    .write_image(rgb8.as_raw(), img_w, img_h, image::ExtendedColorType::Rgb8)
-                    .map_err(|e| ApiPortError::request("encode jpeg", e))?;
-            }
-
-            // Image XObject
-            let image_id = Ref::new(next_id);
-            next_id += 1;
-
-            let mut image_stream = pdf.stream(image_id, &jpeg_bytes);
-            image_stream.pair(Name(b"Type"), Name(b"XObject"));
-            image_stream.pair(Name(b"Subtype"), Name(b"Image"));
-            image_stream.pair(Name(b"Width"), img_w as i32);
-            image_stream.pair(Name(b"Height"), img_h as i32);
-            image_stream.pair(Name(b"ColorSpace"), Name(b"DeviceRGB"));
-            image_stream.pair(Name(b"BitsPerComponent"), 8);
-            image_stream.pair(Name(b"Filter"), Name(b"DCTDecode"));
-            image_stream.finish();
-
-            // Content stream: scale image to fill the page.
-            let content_id = Ref::new(next_id);
-            next_id += 1;
-
-            let mut content = Content::new();
-            content.save_state();
-            // Set transform so that image covers the full page.
-            content.transform([page_width_pt, 0.0, 0.0, page_height_pt, 0.0, 0.0]);
-            content.x_object(to_name_resource_id(idx));
-            content.restore_state();
-
-            let content_bytes = content.finish();
-            pdf.stream(content_id, &content_bytes).finish();
-
-            // Resources object
-            let resources_id = Ref::new(next_id);
-            next_id += 1;
-            let mut resources_dict = pdf.indirect(resources_id).dict();
-            {
-                let xobj = resources_dict.insert(Name(b"XObject"));
-                let mut xobj_dict = xobj.dict();
-                xobj_dict.pair(to_name_resource_id(idx), image_id);
-                xobj_dict.finish();
-            }
-            resources_dict.finish();
-
-            // Page object
-            let page_id = Ref::new(next_id);
-            next_id += 1;
-            page_ids.push(page_id);
-
-            let mut page_dict = pdf.indirect(page_id).dict();
-            page_dict.pair(Name(b"Type"), Name(b"Page"));
-            page_dict.pair(Name(b"Parent"), pages_id);
-            page_dict.pair(
-                Name(b"MediaBox"),
-                Rect::new(0.0, 0.0, page_width_pt, page_height_pt),
+        let tmp_path = save_path.with_extension("pdf.tmp");
+        let write_result: Result<(), ApiPortError> = (|| {
+            let mut file = std::io::BufWriter::new(
+                File::create(&tmp_path)
+                    .map_err(|e| ApiPortError::request("open pdf tmp file", e))?,
             );
-            page_dict.pair(Name(b"Resources"), resources_id);
-            page_dict.pair(Name(b"Contents"), content_id);
-            page_dict.finish();
+            file.write_all(&pdf_bytes)
+                .map_err(|e| ApiPortError::request("write pdf tmp", e))?;
+            file.flush()
+                .map_err(|e| ApiPortError::request("flush pdf tmp", e))?;
+            Ok(())
+        })();
+
+        if let Err(e) = write_result {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(e);
         }
 
-        // Pages tree
-        let mut pages_dict = pdf.indirect(pages_id).dict();
-        pages_dict.pair(Name(b"Type"), Name(b"Pages"));
-        pages_dict.pair(Name(b"Count"), page_ids.len() as i32);
-        {
-            let kids = pages_dict.insert(Name(b"Kids"));
-            let mut arr = kids.array();
-            for id in &page_ids {
-                arr.item(*id);
-            }
-            arr.finish();
-        }
-        pages_dict.finish();
-
-        // Catalog
-        let mut catalog_dict = pdf.indirect(catalog_id).dict();
-        catalog_dict.pair(Name(b"Type"), Name(b"Catalog"));
-        catalog_dict.pair(Name(b"Pages"), pages_id);
-        // Title metadata is optional; keep behaviour close to old impl (title was used in doc ctor).
-        // pdf-writer doesn't set Info by default; we can add it later if needed.
-        catalog_dict.finish();
-
-        // Write file
-        let mut file = std::io::BufWriter::new(
-            File::create(&save_path).map_err(|e| ApiPortError::request("open pdf file", e))?,
-        );
-        let pdf_bytes = pdf.finish();
-        file.write_all(&pdf_bytes)
-            .map_err(|e| ApiPortError::request("save pdf", e))?;
+        tokio::fs::rename(&tmp_path, &save_path)
+            .await
+            .map_err(|e| ApiPortError::request("rename pdf tmp", e))?;
 
         tracing::info!(
-            pages = page_ids.len(),
             bytes = pdf_bytes.len(),
             elapsed_ms = started_at.elapsed().as_millis(),
             "pdf saved"
