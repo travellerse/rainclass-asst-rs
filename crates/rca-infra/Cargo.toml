@@ -43,6 +43,6 @@ rust-i18n.workspace = true
 
 [dev-dependencies]
 mockall = "0.14"
-tempfile = "3"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 mockito = "1.7"
+tempfile = "3"

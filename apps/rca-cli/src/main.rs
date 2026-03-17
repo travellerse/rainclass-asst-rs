@@ -107,22 +107,60 @@ fn auth_state_summary(state: &AuthState) -> String {
     }
 }
 
-fn print_state(result: AppQueryResult) -> Result<(), Box<dyn Error>> {
+fn format_state(result: AppQueryResult) -> Result<String, Box<dyn Error>> {
     let AppQueryResult::State(state) = result else {
         return Err("unexpected query result type for state".into());
     };
 
-    println!(
-        "auth_state      : {}",
+    let mut out = String::new();
+    out.push_str(&format!(
+        "auth_state      : {}\n",
         auth_state_summary(&state.auth_state)
-    );
-    println!("monitor_running : {}", state.monitor_running);
-    println!("lessons         : {}", state.current_lessons.len());
-    println!("recent_events   : {}", state.recent_events.len());
+    ));
+    out.push_str(&format!("monitor_running : {}\n", state.monitor_running));
+    out.push_str(&format!(
+        "lessons         : {}\n",
+        state.current_lessons.len()
+    ));
+    out.push_str(&format!(
+        "recent_events   : {}\n",
+        state.recent_events.len()
+    ));
     if let Some(error) = state.last_error {
-        println!("last_error      : {error}");
+        out.push_str(&format!("last_error      : {error}\n"));
     }
+    Ok(out)
+}
+
+fn print_state(result: AppQueryResult) -> Result<(), Box<dyn Error>> {
+    print!("{}", format_state(result)?);
     Ok(())
+}
+
+fn format_login_qr_output(payload: &str) -> Vec<String> {
+    let trimmed = payload.trim();
+    if trimmed.is_empty() {
+        return vec![rust_i18n::t!("cli_qr_empty").to_string()];
+    }
+
+    if trimmed.starts_with("<svg") {
+        return vec![rust_i18n::t!("cli_qr_svg").to_string(), trimmed.to_string()];
+    }
+
+    match QrCode::new(trimmed.as_bytes()) {
+        Ok(code) => {
+            let rendered = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
+            vec![
+                rust_i18n::t!("cli_qr_scan_prompt").to_string(),
+                rendered,
+                rust_i18n::t!("cli_qr_content", content = trimmed).to_string(),
+            ]
+        }
+        Err(err) => vec![
+            rust_i18n::t!("cli_qr_render_fail", err = err).to_string(),
+            rust_i18n::t!("cli_qr_manual_prompt", content = trimmed).to_string(),
+        ],
+    }
 }
 
 fn decode_qr_from_image(image: DynamicImage) -> Option<String> {
@@ -163,32 +201,8 @@ async fn resolve_terminal_qr_payload(payload: &str) -> String {
 }
 
 fn print_login_qr(payload: &str) {
-    let trimmed = payload.trim();
-    if trimmed.is_empty() {
-        println!("{}", rust_i18n::t!("cli_qr_empty"));
-        return;
-    }
-
-    if trimmed.starts_with("<svg") {
-        println!("{}", rust_i18n::t!("cli_qr_svg"));
-        println!("{trimmed}");
-        return;
-    }
-
-    match QrCode::new(trimmed.as_bytes()) {
-        Ok(code) => {
-            let rendered = code.render::<unicode::Dense1x2>().quiet_zone(true).build();
-            println!("{}", rust_i18n::t!("cli_qr_scan_prompt"));
-            println!("{rendered}");
-            println!("{}", rust_i18n::t!("cli_qr_content", content = trimmed));
-        }
-        Err(err) => {
-            println!("{}", rust_i18n::t!("cli_qr_render_fail", err = err));
-            println!(
-                "{}",
-                rust_i18n::t!("cli_qr_manual_prompt", content = trimmed)
-            );
-        }
+    for line in format_login_qr_output(payload) {
+        println!("{line}");
     }
 }
 
@@ -496,4 +510,132 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Luma};
+    use std::future::Future;
+
+    #[test]
+    fn auth_state_summary_covers_all_variants() {
+        let s = auth_state_summary(&AuthState::LoggedOut);
+        assert!(!s.trim().is_empty());
+
+        let s = auth_state_summary(&AuthState::WaitingQrScan {
+            scene_id: "1".to_string(),
+            token: "t".to_string(),
+        });
+        assert!(s.contains('1'));
+
+        let s = auth_state_summary(&AuthState::WaitingConfirm {
+            scene_id: "2".to_string(),
+        });
+        assert!(s.contains('2'));
+
+        let s = auth_state_summary(&AuthState::LoggedIn { user_id: 42 });
+        assert!(s.contains("42"));
+
+        let s = auth_state_summary(&AuthState::Refreshing { user_id: 7 });
+        assert!(s.contains("7"));
+
+        let s = auth_state_summary(&AuthState::Failed {
+            reason: "oops".to_string(),
+        });
+        assert!(s.contains("oops"));
+    }
+
+    #[test]
+    fn format_state_renders_expected_lines() {
+        let dto = rca_core::app::AppState {
+            auth_state: AuthState::LoggedOut,
+            monitor_running: false,
+            current_lessons: vec![],
+            recent_events: vec![],
+            last_error: Some("E".to_string()),
+        };
+        let s = format_state(AppQueryResult::State(dto)).expect("format_state ok");
+        assert!(s.contains("auth_state"));
+        assert!(s.contains("monitor_running"));
+        assert!(s.contains("lessons"));
+        assert!(s.contains("recent_events"));
+        assert!(s.contains("last_error"));
+        assert!(s.contains('E'));
+        assert!(s.ends_with('\n'));
+    }
+
+    #[test]
+    fn format_state_rejects_unexpected_query_result() {
+        let err = format_state(AppQueryResult::Config(default_config())).unwrap_err();
+        assert!(err.to_string().contains("unexpected"));
+    }
+
+    #[test]
+    fn format_login_qr_output_empty_and_svg_are_handled() {
+        let lines = format_login_qr_output("   ");
+        assert!(!lines.is_empty());
+
+        let lines = format_login_qr_output("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+        assert!(lines.len() >= 2);
+        assert!(lines[1].starts_with("<svg"));
+    }
+
+    #[test]
+    fn format_login_qr_output_normal_payload_includes_content_line() {
+        let payload = "hello";
+        let lines = format_login_qr_output(payload);
+        assert!(lines.iter().any(|l| l.contains(payload)));
+    }
+
+    fn run_async<F: Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().expect("rt").block_on(f)
+    }
+
+    #[test]
+    fn decode_qr_from_image_extracts_content() {
+        let payload = "qr:test";
+        let code = QrCode::new(payload.as_bytes()).expect("qrcode");
+
+        // Create a small monochrome image: each module becomes a 3x3 block.
+        let module_count = code.width();
+        let scale: u32 = 3;
+        let quiet: u32 = 4;
+        let img_w = (module_count as u32 + quiet * 2) * scale;
+        let img_h = img_w;
+
+        let mut img: ImageBuffer<Luma<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(img_w, img_h, Luma([255]));
+        for y in 0..module_count {
+            for x in 0..module_count {
+                if matches!(code[(x, y)], qrcode::types::Color::Dark) {
+                    let px0 = (x as u32 + quiet) * scale;
+                    let py0 = (y as u32 + quiet) * scale;
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            img.put_pixel(px0 + dx, py0 + dy, Luma([0]));
+                        }
+                    }
+                }
+            }
+        }
+
+        let dyn_img = DynamicImage::ImageLuma8(img);
+        let decoded = decode_qr_from_image(dyn_img).expect("decoded");
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn resolve_terminal_qr_payload_passthrough_when_no_showqrcode() {
+        let got = run_async(resolve_terminal_qr_payload("  hello  "));
+        assert_eq!(got, "hello");
+    }
+
+    #[test]
+    fn resolve_terminal_qr_payload_falls_back_on_request_error() {
+        // This contains showqrcode so it will attempt a fetch, but the URL is invalid and should fail fast.
+        let payload = "showqrcode://not-a-valid-url";
+        let got = run_async(resolve_terminal_qr_payload(payload));
+        assert_eq!(got, payload);
+    }
 }

@@ -217,13 +217,72 @@ pub fn sync_config_to_ui(ui: &crate::AppWindow, controller: &crate::app_controll
 mod tests {
     use super::*;
     use rca_core::auth::AuthState;
+    use rca_core::domain::LessonStatus;
+    use rca_core::domain::{
+        BlankAnswer, CourseId, Lesson, LessonId, Problem, ProblemId, ProblemOption, ProblemType,
+    };
     use rca_core::monitor::CoreEvent;
+    use std::num::NonZeroU64;
 
     // simple helpers tests
     #[test]
     fn auth_texts() {
         assert_eq!(auth_status_text(&AuthState::LoggedOut), "未登录");
         assert_eq!(auth_status_kind(&AuthState::LoggedOut), "offline");
+    }
+
+    #[test]
+    fn auth_kinds_cover_all_states() {
+        assert_eq!(auth_status_kind(&AuthState::LoggedOut), "offline");
+
+        assert_eq!(
+            auth_status_kind(&AuthState::WaitingQrScan {
+                scene_id: "1".to_string(),
+                token: "t".to_string(),
+            }),
+            "waiting"
+        );
+        assert_eq!(
+            auth_status_kind(&AuthState::WaitingConfirm {
+                scene_id: "2".to_string(),
+            }),
+            "waiting"
+        );
+
+        assert_eq!(
+            auth_status_kind(&AuthState::LoggedIn { user_id: 42 }),
+            "online"
+        );
+        assert_eq!(
+            auth_status_kind(&AuthState::Refreshing { user_id: 42 }),
+            "online"
+        );
+
+        assert_eq!(
+            auth_status_kind(&AuthState::Failed {
+                reason: "x".to_string()
+            }),
+            "error"
+        );
+    }
+
+    #[test]
+    fn lesson_status_texts_cover_all_statuses() {
+        assert_eq!(lesson_status_text(&LessonStatus::Scheduled), "未开始");
+        assert_eq!(lesson_status_text(&LessonStatus::Running), "上课中");
+        assert_eq!(lesson_status_text(&LessonStatus::Ended), "已结束");
+    }
+
+    #[test]
+    fn format_event_error_kind_and_message() {
+        let ev = CoreEvent::Error {
+            code: "E",
+            message: "boom".into(),
+        };
+        let (kind, msg) = format_core_event(&ev);
+        assert_eq!(kind, "error");
+        assert!(msg.contains("boom"));
+        assert!(msg.contains("E"));
     }
 
     #[test]
@@ -235,5 +294,160 @@ mod tests {
         let (kind, msg) = format_core_event(&ev);
         assert_eq!(kind, "warning");
         assert!(msg.contains("hi"));
+    }
+
+    fn nz(v: u64) -> NonZeroU64 {
+        NonZeroU64::new(v).expect("non-zero")
+    }
+
+    fn sample_lesson() -> Lesson {
+        Lesson {
+            lesson_id: LessonId(nz(1)),
+            course_id: CourseId(nz(2)),
+            course_name: "Rust 101".to_string(),
+            teacher_name: "Alice".to_string(),
+            started_at: None,
+            ended_at: None,
+            status: LessonStatus::Running,
+        }
+    }
+
+    fn sample_problem() -> Problem {
+        Problem {
+            lesson_id: LessonId(nz(1)),
+            problem_id: ProblemId(nz(3)),
+            problem_type: ProblemType::SingleChoice,
+            title: "选择题".to_string(),
+            options: vec![ProblemOption {
+                option_id: "A".to_string(),
+                text: "答案A".to_string(),
+            }],
+            correct_answers: vec!["A".to_string()],
+            blanks: vec![BlankAnswer {
+                accepted_values: vec!["foo".to_string()],
+            }],
+            limit_secs: Some(30),
+            published_at: chrono::Utc::now(),
+            deadline_at: None,
+        }
+    }
+
+    #[test]
+    fn format_event_monitor_started_and_stopped() {
+        let ev1 = CoreEvent::MonitorStarted {
+            at: chrono::Utc::now(),
+        };
+        let (kind1, msg1) = format_core_event(&ev1);
+        assert_eq!(kind1, "success");
+        assert!(msg1.contains("监控已启动"));
+
+        let ev2 = CoreEvent::MonitorStopped {
+            at: chrono::Utc::now(),
+        };
+        let (kind2, msg2) = format_core_event(&ev2);
+        assert_eq!(kind2, "info");
+        assert!(msg2.contains("监控已停止"));
+    }
+
+    #[test]
+    fn format_event_lesson_and_problem_discovered() {
+        let lesson = sample_lesson();
+        let (kind1, msg1) = format_core_event(&CoreEvent::LessonDiscovered { lesson });
+        assert_eq!(kind1, "info");
+        assert!(msg1.contains("发现课程"));
+        assert!(msg1.contains("Rust 101"));
+        assert!(msg1.contains("Alice"));
+
+        let problem = sample_problem();
+        let (kind2, msg2) = format_core_event(&CoreEvent::ProblemDiscovered { problem });
+        assert_eq!(kind2, "warning");
+        assert!(msg2.contains("收到题目"));
+        assert!(msg2.contains("选择题"));
+    }
+
+    #[test]
+    fn format_event_checkin_and_auto_actions() {
+        let lesson_id = LessonId(nz(10));
+        let checkin_id = rca_core::domain::CheckinId(nz(11));
+        let problem_id = ProblemId(nz(12));
+
+        let (k1, m1) = format_core_event(&CoreEvent::CheckinDiscovered {
+            lesson_id,
+            checkin_id,
+        });
+        assert_eq!(k1, "warning");
+        assert!(m1.contains("签到已开启"));
+
+        let (k2, m2) = format_core_event(&CoreEvent::AutoAnswerSubmitted {
+            lesson_id,
+            problem_id,
+        });
+        assert_eq!(k2, "success");
+        assert!(m2.contains("自动答题完成"));
+
+        let (k3, m3) = format_core_event(&CoreEvent::AutoCheckinSubmitted {
+            lesson_id,
+            checkin_id,
+        });
+        assert_eq!(k3, "success");
+        assert!(m3.contains("自动签到完成"));
+    }
+
+    #[test]
+    fn format_event_danmu_call_ppt_slide_and_unlock() {
+        let lesson_id = LessonId(nz(20));
+
+        let (k1, m1) = format_core_event(&CoreEvent::DanmuPublished {
+            lesson_id,
+            user_name: Some("Bob".to_string()),
+            content: "hello".to_string(),
+        });
+        assert_eq!(k1, "info");
+        assert!(m1.contains("实时弹幕"));
+        assert!(m1.contains("Bob"));
+        assert!(m1.contains("hello"));
+
+        let (k1b, m1b) = format_core_event(&CoreEvent::DanmuPublished {
+            lesson_id,
+            user_name: None,
+            content: "hi".to_string(),
+        });
+        assert_eq!(k1b, "info");
+        assert!(m1b.contains("未知"));
+
+        let (k2, m2) = format_core_event(&CoreEvent::CallPaused {
+            lesson_id,
+            target_name: "Charlie".to_string(),
+        });
+        assert_eq!(k2, "warning");
+        assert!(m2.contains("点名"));
+        assert!(m2.contains("Charlie"));
+
+        let (k3, m3) = format_core_event(&CoreEvent::PresentationUpdated {
+            lesson_id,
+            presentation_id: 99,
+        });
+        assert_eq!(k3, "info");
+        assert!(m3.contains("PPT"));
+        assert!(m3.contains("99"));
+
+        let (k4, m4) = format_core_event(&CoreEvent::SlideNavigated {
+            lesson_id,
+            presentation_id: 99,
+            slide_id: 123,
+            slide_index: 4,
+        });
+        assert_eq!(k4, "info");
+        assert!(m4.contains("切换幻灯片"));
+        assert!(m4.contains("页面 4"));
+        assert!(m4.contains("id: 123"));
+
+        let (k5, m5) = format_core_event(&CoreEvent::ProblemUnlocked {
+            lesson_id,
+            problem_id: ProblemId(nz(77)),
+        });
+        assert_eq!(k5, "warning");
+        assert!(m5.contains("题目已解锁"));
+        assert!(m5.contains("77"));
     }
 }

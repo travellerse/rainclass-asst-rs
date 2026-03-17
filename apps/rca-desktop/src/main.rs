@@ -3,18 +3,20 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use rca_core::app::{AppCommand, AppConfigDto, AppQueryResult, AppService};
+use rca_core::app::{AppCommand, AppQueryResult, AppService};
 
 rust_i18n::i18n!("../../locales", fallback = "zh-CN");
 
 slint::include_modules!();
 
 mod app_controller;
+mod config_mapping;
 mod event_subscriber;
 mod login_flow;
 mod ui_helpers;
 
 use app_controller::AppController;
+use config_mapping::{ConfigFromUi, build_config_dto_from_ui_values};
 use ui_helpers::{sync_config_to_ui, sync_ui_state};
 
 /// Run an `AppCommand` on the controller in a background thread and refresh the UI.
@@ -155,22 +157,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Some(ui) => ui,
                 None => return,
             };
-            let config = AppConfigDto {
-                monitor_interval_secs: ui.get_setting_monitor_interval().max(1) as u64,
-                auto_checkin_enabled: ui.get_setting_auto_checkin(),
-                auto_answer_enabled: ui.get_setting_auto_answer(),
+            let values = ConfigFromUi {
+                monitor_interval: ui.get_setting_monitor_interval(),
+                auto_checkin: ui.get_setting_auto_checkin(),
+                auto_answer: ui.get_setting_auto_answer(),
                 auto_answer_random_guess: ui.get_setting_auto_answer_random_guess(),
-                auto_danmu_enabled: true,
-                danmu_threshold: 4,
-                answer_delay_ms: ui.get_setting_answer_delay().max(0) as u64,
-                answer_delay_type: 1,
-                answer_delay_custom_percent: 50,
+                answer_delay: ui.get_setting_answer_delay(),
                 notify_enabled: ui.get_setting_notify_enabled(),
                 webhook_url: ui.get_setting_webhook_url().to_string(),
                 check_update_on_startup: ui.get_setting_check_update_on_startup(),
-                tenant: ui.get_setting_active_tenant().to_string(),
-                auth_state_hint: None,
+                active_tenant: ui.get_setting_active_tenant().to_string(),
             };
+            let config = build_config_dto_from_ui_values(values);
             spawn_command(
                 controller.clone(),
                 ui_handle.clone(),
