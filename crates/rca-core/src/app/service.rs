@@ -48,13 +48,13 @@ struct InnerState {
     subscribers: Vec<mpsc::Sender<AppEvent>>,
 }
 
-pub struct CoreAppService {
+pub struct AppServiceImpl {
     deps: CoreAppDeps,
     inner: Arc<Mutex<InnerState>>,
     background: Mutex<Option<CoreBackgroundTasks>>,
 }
 
-impl CoreAppService {
+impl AppServiceImpl {
     pub fn new(deps: CoreAppDeps, initial_config: AppConfigDto) -> Self {
         let inner = Arc::new(Mutex::new(InnerState {
             app_state: AppState {
@@ -342,7 +342,7 @@ impl CoreAppService {
 }
 
 #[async_trait]
-impl AppService for CoreAppService {
+impl AppService for AppServiceImpl {
     async fn handle_command(&self, cmd: AppCommand) -> Result<(), AppError> {
         match cmd {
             AppCommand::LoadConfig => {
@@ -452,7 +452,7 @@ impl AppService for CoreAppService {
                     .map_err(AppError::from)?;
                 self.apply_qr_login_progress(scene_id, progress).await
             }
-            AppCommand::WaitLogin {
+            AppCommand::AwaitLogin {
                 scene_id,
                 timeout_secs,
             } => {
@@ -616,7 +616,7 @@ mod tests {
     };
 
     use super::{AppEvent, AppService};
-    use super::{CoreAppDeps, CoreAppService};
+    use super::{AppServiceImpl, CoreAppDeps};
 
     #[derive(Clone)]
     struct MockPorts {
@@ -822,7 +822,7 @@ mod tests {
     #[tokio::test]
     async fn login_flow_should_update_state_to_logged_in() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -867,7 +867,7 @@ mod tests {
             expires_at_unix_ms: None,
         });
 
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -920,7 +920,7 @@ mod tests {
             }),
         };
 
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -965,7 +965,7 @@ mod tests {
             expires_at_unix_ms: None,
         });
 
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1000,7 +1000,7 @@ mod tests {
             expires_at_unix_ms: None,
         });
 
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1028,7 +1028,7 @@ mod tests {
     #[tokio::test]
     async fn start_monitor_should_fail_when_logged_out() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1053,7 +1053,7 @@ mod tests {
             published_at_unix_ms: 0,
         });
 
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1077,7 +1077,7 @@ mod tests {
     #[tokio::test]
     async fn start_and_stop_monitor_should_toggle_running_state() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1166,7 +1166,7 @@ mod tests {
 
         let mut config = default_config();
         config.monitor_interval_secs = 1; // Faster poll for tests
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1219,7 +1219,7 @@ mod tests {
     #[tokio::test]
     async fn save_config_should_persist_and_update_runtime() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1257,7 +1257,7 @@ mod tests {
     #[tokio::test]
     async fn logout_should_clear_session_and_stop_monitor() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1304,7 +1304,7 @@ mod tests {
     #[tokio::test]
     async fn get_recent_events_should_respect_limit() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1331,7 +1331,7 @@ mod tests {
     async fn refresh_session_without_session_should_fail() {
         let ports = Arc::new(MockPorts::new(default_config()));
         // No session set
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1369,7 +1369,7 @@ mod tests {
     #[tokio::test]
     async fn start_monitor_when_already_running_is_noop() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1418,7 +1418,7 @@ mod tests {
         let ports = Arc::new(MockPorts::new(default_config()));
         // update is None by default → no update available
 
-        let app = CoreAppService::new_started(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),

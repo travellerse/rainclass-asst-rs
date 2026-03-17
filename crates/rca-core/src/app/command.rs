@@ -11,7 +11,7 @@ pub enum AppCommand {
     PollLogin {
         scene_id: String,
     },
-    WaitLogin {
+    AwaitLogin {
         scene_id: String,
         timeout_secs: u64,
     },

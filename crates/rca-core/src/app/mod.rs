@@ -12,6 +12,7 @@ pub use app_state::*;
 pub use command::*;
 pub use errors::*;
 pub use query::*;
+pub use service::AppServiceImpl;
 pub use service::*;
 pub use tenant::*;
 pub use usecases::*;

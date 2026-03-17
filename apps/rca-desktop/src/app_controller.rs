@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use rca_app::{BootstrapOptions, NotifierMode, StartupActions};
 use rca_core::app::{
-    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, CoreAppService,
+    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, AppServiceImpl,
 };
 
 use tokio::task::JoinHandle;
@@ -37,15 +37,15 @@ impl TaskGroup {
 
 /// High-level controller that encapsulates the core application service and
 /// Tokio runtime.  UI callbacks interact with this object instead of talking
-/// directly to `CoreAppService`.
+/// directly to the core `AppService` implementation.
 #[derive(Clone)]
-pub struct AppController {
-    pub app: Arc<CoreAppService>,
+pub struct DesktopController {
+    pub app: Arc<AppServiceImpl>,
     pub runtime: Arc<tokio::runtime::Runtime>,
     tasks: Arc<TaskGroup>,
 }
 
-impl AppController {
+impl DesktopController {
     /// Application default configuration used when no existing config is found.
     ///
     /// Copied from the original `main.rs` helper.
@@ -62,7 +62,7 @@ impl AppController {
             startup: StartupActions::desktop_default(),
         }))?;
 
-        Ok(AppController {
+        Ok(DesktopController {
             app,
             runtime,
             tasks: Arc::new(TaskGroup::default()),

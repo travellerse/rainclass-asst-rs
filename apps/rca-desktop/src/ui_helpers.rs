@@ -188,7 +188,7 @@ pub fn apply_state_to_ui(ui: &crate::AppWindow, state: &AppState) {
 ///
 /// This function is synchronous since Slint callbacks execute on the
 /// UI thread. It uses the controller's runtime to wait for the query result.
-pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::AppController) {
+pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::DesktopController) {
     let ui_handle = ui.as_weak();
     let controller = controller.clone();
     controller.clone().spawn_task(async move {
@@ -209,7 +209,10 @@ pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::
 }
 
 /// Synchronize configuration values from the app to the UI form fields.
-pub fn sync_config_to_ui(ui: &crate::AppWindow, controller: &crate::app_controller::AppController) {
+pub fn sync_config_to_ui(
+    ui: &crate::AppWindow,
+    controller: &crate::app_controller::DesktopController,
+) {
     let ui_handle = ui.as_weak();
     let controller = controller.clone();
     controller.clone().spawn_task(async move {

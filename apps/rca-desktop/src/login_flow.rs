@@ -3,14 +3,14 @@ use std::sync::Arc;
 use slint::Weak;
 use tokio::time::{Duration, sleep};
 
-use crate::app_controller::AppController;
+use crate::app_controller::DesktopController;
 use crate::ui_helpers::apply_state_to_ui;
 use rca_core::app::{AppCommand, AppQueryResult, AppService};
 use rca_core::auth::AuthState;
 
 /// Handle the login flow: start QR, wait for confirmation, refresh UI at each
 /// stage.  Runs in a background task (tokio or thread).
-pub async fn perform_login(controller: Arc<AppController>, ui_handle: Weak<crate::AppWindow>) {
+pub async fn perform_login(controller: Arc<DesktopController>, ui_handle: Weak<crate::AppWindow>) {
     // Step 1: initiate login
     if let Err(e) = controller.login_by_qr().await {
         let ui_h = ui_handle.clone();
@@ -51,7 +51,7 @@ pub async fn perform_login(controller: Arc<AppController>, ui_handle: Weak<crate
     }
 
     // Step 3: wait for login result
-    let wait = controller.app.handle_command(AppCommand::WaitLogin {
+    let wait = controller.app.handle_command(AppCommand::AwaitLogin {
         scene_id,
         timeout_secs: 20,
     });
@@ -93,7 +93,7 @@ mod tests {
     #[cfg_attr(target_os = "linux", ignore)]
     fn login_flow_no_panic() {
         // bootstrap controller (real initialization but won't perform network in test)
-        let controller = Arc::new(AppController::bootstrap().unwrap());
+        let controller = Arc::new(DesktopController::bootstrap().unwrap());
         // create a temporary UI window to obtain a Weak handle
         let ui = AppWindow::new().unwrap();
         let ui_handle = ui.as_weak();

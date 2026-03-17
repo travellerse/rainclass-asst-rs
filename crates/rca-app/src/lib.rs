@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::sync::Arc;
 
-use rca_core::app::{AppCommand, AppConfigDto, AppService, CoreAppDeps, CoreAppService};
+use rca_core::app::{AppCommand, AppConfigDto, AppService, AppServiceImpl, CoreAppDeps};
 use rca_infra::storage::ConfigRepository;
 
 #[derive(Debug, Clone, Copy)]
@@ -60,13 +60,13 @@ pub fn init_default_logger(
 
 pub async fn bootstrap_core_app(
     options: BootstrapOptions,
-) -> Result<Arc<CoreAppService>, BootstrapError> {
+) -> Result<Arc<AppServiceImpl>, BootstrapError> {
     let app = build_core_app(&options).await?;
     run_startup_actions(app.clone(), options.startup).await?;
     Ok(app)
 }
 
-async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<CoreAppService>, BootstrapError> {
+async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<AppServiceImpl>, BootstrapError> {
     let paths = rca_infra::storage::AppPaths::detect().map_err(boxed)?;
     let config_repo = Arc::new(rca_infra::storage::JsonFileConfigRepository::new(
         paths.config_file,
@@ -111,7 +111,7 @@ async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<CoreAppService
 
     let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
 
-    let app = Arc::new(CoreAppService::new_started(
+    let app = Arc::new(AppServiceImpl::new_started(
         CoreAppDeps {
             api: api_port,
             config_store: Arc::new(rca_infra::bridge::CoreConfigStoreAdapter::new(config_repo)),
@@ -132,7 +132,7 @@ async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<CoreAppService
 }
 
 async fn run_startup_actions(
-    app: Arc<CoreAppService>,
+    app: Arc<AppServiceImpl>,
     startup: StartupActions,
 ) -> Result<(), BootstrapError> {
     if startup.load_config {

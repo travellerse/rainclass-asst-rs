@@ -15,13 +15,13 @@ mod event_subscriber;
 mod login_flow;
 mod ui_helpers;
 
-use app_controller::AppController;
+use app_controller::DesktopController;
 use config_mapping::{ConfigFromUi, build_config_dto_from_ui_values};
 use ui_helpers::{apply_state_to_ui, sync_config_to_ui, sync_ui_state};
 
 /// Run an `AppCommand` on the controller in the background and refresh the UI.
 fn spawn_command(
-    controller: Arc<AppController>,
+    controller: Arc<DesktopController>,
     ui_handle: slint::Weak<AppWindow>,
     cmd: AppCommand,
 ) {
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let _log_guards = rca_app::init_default_logger("info");
 
     // ── Bootstrap controller & UI ──
-    let controller = Arc::new(AppController::bootstrap()?);
+    let controller = Arc::new(DesktopController::bootstrap()?);
     let ui = AppWindow::new()?;
 
     ui.global::<I18n>()

@@ -246,7 +246,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let timeout_secs = (attempts as u64)
                 .saturating_mul(interval_secs.max(1))
                 .max(1);
-            app.handle_command(AppCommand::WaitLogin {
+            app.handle_command(AppCommand::AwaitLogin {
                 scene_id,
                 timeout_secs,
             })
