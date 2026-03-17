@@ -25,6 +25,7 @@ pub(crate) fn build_config_dto_from_ui_values(values: ConfigFromUi) -> AppConfig
         answer_delay_type: 1,
         answer_delay_custom_percent: 50,
         notify_enabled: values.notify_enabled,
+        notify_events: Default::default(),
         webhook_url: values.webhook_url,
         check_update_on_startup: values.check_update_on_startup,
         tenant: values.active_tenant,

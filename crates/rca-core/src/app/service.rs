@@ -89,40 +89,51 @@ impl CoreAppService {
                             CoreEvent::AutoAnswerSubmitted {
                                 lesson_id,
                                 problem_id,
-                            } => Some(AppNotification {
-                                title: "自动答题".to_string(),
-                                body: format!(
-                                    "已成功提交自动答题！(课程 {}, 题目 {})",
-                                    lesson_id.0.get(),
-                                    problem_id.0.get()
-                                ),
-                            }),
+                            } => Some((
+                                "auto_answer_submitted",
+                                AppNotification {
+                                    title: "自动答题".to_string(),
+                                    body: format!(
+                                        "已成功提交自动答题！(课程 {}, 题目 {})",
+                                        lesson_id.0.get(),
+                                        problem_id.0.get()
+                                    ),
+                                },
+                            )),
                             CoreEvent::AutoCheckinSubmitted {
                                 lesson_id,
                                 checkin_id,
-                            } => Some(AppNotification {
-                                title: "自动签到".to_string(),
-                                body: format!(
-                                    "已成功自动签到！(课程 {}, 签到 {})",
-                                    lesson_id.0.get(),
-                                    checkin_id.0.get()
-                                ),
-                            }),
+                            } => Some((
+                                "auto_checkin_submitted",
+                                AppNotification {
+                                    title: "自动签到".to_string(),
+                                    body: format!(
+                                        "已成功自动签到！(课程 {}, 签到 {})",
+                                        lesson_id.0.get(),
+                                        checkin_id.0.get()
+                                    ),
+                                },
+                            )),
                             CoreEvent::CallPaused {
                                 lesson_id,
                                 target_name,
-                            } => Some(AppNotification {
-                                title: "老师正在点名".to_string(),
-                                body: format!(
-                                    "老师正在点名：{}！(课程 {})",
-                                    target_name,
-                                    lesson_id.0.get()
-                                ),
-                            }),
+                            } => Some((
+                                "call_paused",
+                                AppNotification {
+                                    title: "老师正在点名".to_string(),
+                                    body: format!(
+                                        "老师正在点名：{}！(课程 {})",
+                                        target_name,
+                                        lesson_id.0.get()
+                                    ),
+                                },
+                            )),
                             _ => None,
                         };
 
-                        if let Some(msg) = maybe_notify {
+                        if let Some((event_key, msg)) = maybe_notify
+                            && Self::notify_event_enabled(&guard.config, event_key)
+                        {
                             let notifier_clone = notifier.clone();
                             tokio::spawn(async move {
                                 let _ = notifier_clone.notify(msg).await;
@@ -219,15 +230,25 @@ impl CoreAppService {
         };
 
         if let Some(message) = maybe_notify {
-            self.deps
-                .notifier
-                .notify(message.clone())
-                .await
-                .map_err(AppError::from)?;
-            self.emit_event(AppEvent::Notification(message)).await;
+            let config = {
+                let inner = self.inner.lock().expect("core app state poisoned");
+                inner.config.clone()
+            };
+            if config.notify_enabled && Self::notify_event_enabled(&config, "login_success") {
+                self.deps
+                    .notifier
+                    .notify(message.clone())
+                    .await
+                    .map_err(AppError::from)?;
+                self.emit_event(AppEvent::Notification(message)).await;
+            }
         }
         self.emit_state_changed().await;
         Ok(())
+    }
+
+    fn notify_event_enabled(config: &AppConfigDto, event_key: &str) -> bool {
+        config.notify_events.get(event_key).copied().unwrap_or(true)
     }
 
     async fn stop_monitor_engine(&self) {
@@ -847,6 +868,7 @@ mod tests {
             answer_delay_type: 2,
             answer_delay_custom_percent: 30,
             notify_enabled: false,
+            notify_events: Default::default(),
             webhook_url: "http://example.com/webhook".to_string(),
             check_update_on_startup: false,
             tenant: "Rain".to_string(),

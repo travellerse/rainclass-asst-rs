@@ -1,4 +1,5 @@
 use crate::auth::AuthState;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub enum AppCommand {
@@ -39,6 +40,7 @@ pub struct AppConfigDto {
     pub answer_delay_type: u32,
     pub answer_delay_custom_percent: u32,
     pub notify_enabled: bool,
+    pub notify_events: BTreeMap<String, bool>,
     pub webhook_url: String,
     pub check_update_on_startup: bool,
     pub tenant: String,
@@ -58,6 +60,7 @@ impl Default for AppConfigDto {
             answer_delay_type: 1,
             answer_delay_custom_percent: 50,
             notify_enabled: true,
+            notify_events: BTreeMap::new(),
             webhook_url: String::new(),
             check_update_on_startup: true,
             tenant: "Hetang".to_string(),

@@ -41,7 +41,7 @@ settings_answer_delay: "Answer Delay (ms)"
 settings_notify_title: "Notifications & Updates"
 settings_system_notify: "System Notifications"
 settings_webhook_url: "Webhook URL"
-settings_webhook_placeholder: "e.g. https://sctapi.ftqq.com/xxx.send"
+settings_webhook_placeholder: "e.g. https://sctapi.ftqq.com/xxx.send (multiple URLs: comma/space separated)"
 settings_check_update_startup: "Check Update on Startup"
 btn_save_config: "Save Configuration"
 

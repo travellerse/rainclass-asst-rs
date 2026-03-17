@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::storage::StorageError;
 
@@ -16,6 +17,7 @@ pub struct AppConfig {
     pub answer_delay_type: u32,
     pub answer_delay_custom_percent: u32,
     pub notify_enabled: bool,
+    pub notify_events: BTreeMap<String, bool>,
     pub webhook_url: String,
     pub check_update_on_startup: bool,
     pub active_tenant: TenantKind,
@@ -43,6 +45,7 @@ impl Default for AppConfig {
             answer_delay_type: 1,
             answer_delay_custom_percent: 50,
             notify_enabled: true,
+            notify_events: BTreeMap::new(),
             webhook_url: String::new(),
             check_update_on_startup: true,
             active_tenant: TenantKind::default(),
@@ -73,6 +76,7 @@ mod tests {
             answer_delay_type: 3,
             answer_delay_custom_percent: 75,
             notify_enabled: false,
+            notify_events: BTreeMap::new(),
             webhook_url: "https://hook.example.com".to_string(),
             check_update_on_startup: false,
             active_tenant: TenantKind::Rain,

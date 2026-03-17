@@ -87,6 +87,7 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
             answer_delay_type: cfg.answer_delay_type,
             answer_delay_custom_percent: cfg.answer_delay_custom_percent,
             notify_enabled: cfg.notify_enabled,
+            notify_events: cfg.notify_events.clone(),
             webhook_url: cfg.webhook_url.clone(),
             check_update_on_startup: cfg.check_update_on_startup,
             tenant: match cfg.active_tenant {
@@ -111,6 +112,7 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
             answer_delay_type: config.answer_delay_type,
             answer_delay_custom_percent: config.answer_delay_custom_percent,
             notify_enabled: config.notify_enabled,
+            notify_events: config.notify_events.clone(),
             webhook_url: config.webhook_url.clone(),
             check_update_on_startup: config.check_update_on_startup,
             active_tenant: match config.tenant.as_str() {

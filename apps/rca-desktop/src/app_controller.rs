@@ -51,18 +51,13 @@ impl AppController {
             })
             .unwrap_or(rca_infra::api::TenantHost::Hetang);
 
-        let mut notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> = vec![
+        let notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> = vec![
             Box::new(rca_infra::notify::LoggingNotifier),
             Box::new(rca_infra::notify::DesktopNotifier::new()),
+            Box::new(rca_infra::notify::ConfigWebhookNotifier::new(
+                config_repo.clone(),
+            )),
         ];
-
-        if let Some(cfg) = initial_config.as_ref()
-            && !cfg.webhook_url.is_empty()
-        {
-            notifiers.push(Box::new(rca_infra::notify::WebhookNotifier::new(
-                &cfg.webhook_url,
-            )));
-        }
 
         let notifier = Arc::new(rca_infra::notify::MultiNotifier::new(notifiers));
 

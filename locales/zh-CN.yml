@@ -41,7 +41,7 @@ settings_answer_delay: "答题延迟 (ms)"
 settings_notify_title: "通知与更新"
 settings_system_notify: "系统通知"
 settings_webhook_url: "Webhook推送URL"
-settings_webhook_placeholder: "如: https://sctapi.ftqq.com/xxx.send"
+settings_webhook_placeholder: "如: https://sctapi.ftqq.com/xxx.send（可填多个，用逗号/空格分隔）"
 settings_check_update_startup: "启动时检查更新"
 btn_save_config: "保存配置"
 
