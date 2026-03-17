@@ -1,4 +1,4 @@
-use rca_core::app::AppConfigDto;
+use rca_core::app::{AppConfigDto, TenantKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfigFromUi {
@@ -14,6 +14,7 @@ pub(crate) struct ConfigFromUi {
 }
 
 pub(crate) fn build_config_dto_from_ui_values(values: ConfigFromUi) -> AppConfigDto {
+    let tenant = TenantKind::parse_config_str(&values.active_tenant).unwrap_or_default();
     AppConfigDto {
         monitor_interval_secs: values.monitor_interval.max(1) as u64,
         auto_checkin_enabled: values.auto_checkin,
@@ -28,7 +29,7 @@ pub(crate) fn build_config_dto_from_ui_values(values: ConfigFromUi) -> AppConfig
         notify_events: Default::default(),
         webhook_url: values.webhook_url,
         check_update_on_startup: values.check_update_on_startup,
-        tenant: values.active_tenant,
+        tenant,
         auth_state_hint: None,
     }
 }
@@ -60,7 +61,7 @@ mod tests {
         assert!(dto.notify_enabled);
         assert_eq!(dto.webhook_url, "https://example.invalid/hook");
         assert!(dto.check_update_on_startup);
-        assert_eq!(dto.tenant, "hetang");
+        assert_eq!(dto.tenant, TenantKind::Hetang);
         assert_eq!(dto.danmu_threshold, 4);
         assert!(dto.auto_danmu_enabled);
         assert_eq!(dto.answer_delay_type, 1);
@@ -91,6 +92,6 @@ mod tests {
         assert!(!dto.notify_enabled);
         assert_eq!(dto.webhook_url, "");
         assert!(!dto.check_update_on_startup);
-        assert_eq!(dto.tenant, "rain");
+        assert_eq!(dto.tenant, TenantKind::Rain);
     }
 }

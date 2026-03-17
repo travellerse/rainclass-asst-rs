@@ -1,3 +1,4 @@
+use crate::app::TenantKind;
 use crate::auth::AuthState;
 use std::collections::BTreeMap;
 
@@ -43,7 +44,7 @@ pub struct AppConfigDto {
     pub notify_events: BTreeMap<String, bool>,
     pub webhook_url: String,
     pub check_update_on_startup: bool,
-    pub tenant: String,
+    pub tenant: TenantKind,
     pub auth_state_hint: Option<AuthState>,
 }
 
@@ -63,7 +64,7 @@ impl Default for AppConfigDto {
             notify_events: BTreeMap::new(),
             webhook_url: String::new(),
             check_update_on_startup: true,
-            tenant: "Hetang".to_string(),
+            tenant: TenantKind::Hetang,
             auth_state_hint: None,
         }
     }

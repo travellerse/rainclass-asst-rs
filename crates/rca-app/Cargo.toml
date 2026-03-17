@@ -1,0 +1,10 @@
+[package]
+name = "rca-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rca-core = { version = "0.1.0", path = "../rca-core" }
+rca-infra = { version = "0.1.0", path = "../rca-infra" }
+thiserror.workspace = true
+tracing-appender = "0.2.4"

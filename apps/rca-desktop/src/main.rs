@@ -17,43 +17,45 @@ mod ui_helpers;
 
 use app_controller::AppController;
 use config_mapping::{ConfigFromUi, build_config_dto_from_ui_values};
-use ui_helpers::{sync_config_to_ui, sync_ui_state};
+use ui_helpers::{apply_state_to_ui, sync_config_to_ui, sync_ui_state};
 
-/// Run an `AppCommand` on the controller in a background thread and refresh the UI.
+/// Run an `AppCommand` on the controller in the background and refresh the UI.
 fn spawn_command(
     controller: Arc<AppController>,
     ui_handle: slint::Weak<AppWindow>,
     cmd: AppCommand,
 ) {
-    let _ = std::thread::spawn(move || {
-        if let Err(e) = controller
-            .runtime
-            .block_on(controller.app.handle_command(cmd))
-        {
-            let ctrl = controller.clone();
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = ui_handle.upgrade() {
-                    ui.set_last_error_text(format!("{e}").into());
-                    sync_ui_state(&ui, &ctrl);
-                }
-            });
-            return;
-        }
-        let ctrl = controller.clone();
+    let ctrl = controller.clone();
+    controller.spawn_task(async move {
+        let cmd_err = ctrl
+            .app
+            .handle_command(cmd)
+            .await
+            .err()
+            .map(|e| e.to_string());
+
+        let state = match ctrl.get_state().await {
+            Ok(AppQueryResult::State(state)) => Ok(state),
+            Ok(_) => Err("状态查询返回类型异常".to_string()),
+            Err(e) => Err(format!("状态查询失败: {e}")),
+        };
+
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_handle.upgrade() {
-                sync_ui_state(&ui, &ctrl);
+                match state {
+                    Ok(state) => apply_state_to_ui(&ui, &state),
+                    Err(err) => ui.set_last_error_text(err.into()),
+                }
+                if let Some(err) = cmd_err {
+                    ui.set_last_error_text(err.into());
+                }
             }
         });
     });
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let log_dir = match rca_infra::storage::AppPaths::detect() {
-        Ok(paths) => paths.log_dir,
-        Err(_) => std::env::current_dir().unwrap_or_default().join("logs"),
-    };
-    let _log_guards = rca_infra::log::init_logger(log_dir, "info");
+    let _log_guards = rca_app::init_default_logger("info");
 
     // ── Bootstrap controller & UI ──
     let controller = Arc::new(AppController::bootstrap()?);
@@ -62,19 +64,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     ui.global::<I18n>()
         .on_t(|key| rust_i18n::t!(key.as_str()).to_string().into());
 
-    // optional update check from controller state
-    let startup_should_check_update = controller
-        .runtime
-        .block_on(controller.get_config())
-        .ok()
-        .and_then(|result| match result {
-            AppQueryResult::Config(config) => Some(config.check_update_on_startup),
-            _ => None,
-        })
-        .unwrap_or(false);
-    if startup_should_check_update {
-        let _ = controller.runtime.block_on(controller.check_update());
-    }
+    controller.spawn_task({
+        let controller = controller.clone();
+        async move {
+            if let Ok(AppQueryResult::Config(config)) = controller.get_config().await
+                && config.check_update_on_startup
+            {
+                let _ = controller.check_update().await;
+            }
+        }
+    });
 
     // Initial sync
     sync_ui_state(&ui, &controller);
@@ -87,14 +86,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         let controller = controller.clone();
         let ui_handle = ui.as_weak();
         move || {
-            let controller = controller.clone();
-            let ui_handle = ui_handle.clone();
-            std::thread::spawn(move || {
-                let rt = controller.runtime.clone();
-                rt.block_on(async move {
-                    login_flow::perform_login(controller, ui_handle).await;
-                });
-            });
+            let ctrl = controller.clone();
+            controller.spawn_task(login_flow::perform_login(ctrl, ui_handle.clone()));
         }
     });
 
@@ -181,5 +174,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     event_subscriber::start_event_loop(controller.clone(), ui.as_weak());
 
     ui.run()?;
+    controller.shutdown();
     Ok(())
 }

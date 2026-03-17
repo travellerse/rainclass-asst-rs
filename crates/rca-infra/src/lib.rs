@@ -3,4 +3,5 @@ pub mod bridge;
 pub mod log;
 pub mod notify;
 pub mod storage;
+pub mod tenant;
 pub mod update;

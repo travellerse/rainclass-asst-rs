@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use slint::Weak;
+use tokio::time::{Duration, sleep};
 
 use crate::app_controller::AppController;
-use crate::ui_helpers::{auth_status_kind, auth_status_text};
+use crate::ui_helpers::apply_state_to_ui;
 use rca_core::app::{AppCommand, AppQueryResult, AppService};
 use rca_core::auth::AuthState;
 
@@ -12,9 +13,12 @@ use rca_core::auth::AuthState;
 pub async fn perform_login(controller: Arc<AppController>, ui_handle: Weak<crate::AppWindow>) {
     // Step 1: initiate login
     if let Err(e) = controller.login_by_qr().await {
-        if let Some(ui) = ui_handle.upgrade() {
-            ui.set_last_error_text(format!("发起登录失败: {e}").into());
-        }
+        let ui_h = ui_handle.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_h.upgrade() {
+                ui.set_last_error_text(format!("发起登录失败: {e}").into());
+            }
+        });
         return;
     }
 
@@ -24,9 +28,12 @@ pub async fn perform_login(controller: Arc<AppController>, ui_handle: Weak<crate
             AuthState::WaitingQrScan { scene_id, .. } => scene_id,
             AuthState::WaitingConfirm { scene_id } => scene_id,
             _ => {
-                if let Some(ui) = ui_handle.upgrade() {
-                    ui.set_last_error_text("发起登录后未获取到 scene_id".into());
-                }
+                let ui_h = ui_handle.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_h.upgrade() {
+                        ui.set_last_error_text("发起登录后未获取到 scene_id".into());
+                    }
+                });
                 return;
             }
         },
@@ -34,28 +41,40 @@ pub async fn perform_login(controller: Arc<AppController>, ui_handle: Weak<crate
     };
 
     // refresh UI while waiting
-    if let Some(ui) = ui_handle.upgrade()
-        && let Ok(AppQueryResult::State(state)) = controller.get_state().await
-    {
-        ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
-        ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
+    if let Ok(AppQueryResult::State(state)) = controller.get_state().await {
+        let ui_h = ui_handle.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_h.upgrade() {
+                apply_state_to_ui(&ui, &state);
+            }
+        });
     }
 
     // Step 3: wait for login result
-    let _ = controller
-        .app
-        .handle_command(AppCommand::WaitLogin {
-            scene_id,
-            timeout_secs: 20,
-        })
-        .await;
+    let wait = controller.app.handle_command(AppCommand::WaitLogin {
+        scene_id,
+        timeout_secs: 20,
+    });
+    tokio::select! {
+        _ = wait => {}
+        _ = async {
+            loop {
+                if ui_handle.upgrade().is_none() {
+                    break;
+                }
+                sleep(Duration::from_millis(300)).await;
+            }
+        } => { return; }
+    }
 
     // final sync
-    if let Some(ui) = ui_handle.upgrade()
-        && let Ok(AppQueryResult::State(state)) = controller.get_state().await
-    {
-        ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
-        ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
+    if let Ok(AppQueryResult::State(state)) = controller.get_state().await {
+        let ui_h = ui_handle.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_h.upgrade() {
+                apply_state_to_ui(&ui, &state);
+            }
+        });
     }
 }
 

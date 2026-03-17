@@ -7,8 +7,8 @@ edition = "2024"
 default = []
 
 [dependencies]
+rca-app = { version = "0.1.0", path = "../../crates/rca-app" }
 rca-core = { version = "0.1.0", path = "../../crates/rca-core" }
-rca-infra = { version = "0.1.0", path = "../../crates/rca-infra" }
 slint.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 chrono.workspace = true
