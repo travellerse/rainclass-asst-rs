@@ -46,4 +46,4 @@ mockall = "0.14"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 mockito = "1.7"
 tempfile = "3"
-lopdf = "0.35"
+lopdf = "0.39"
