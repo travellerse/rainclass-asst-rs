@@ -226,14 +226,11 @@ impl CoreMonitorEngine {
                 }
             }
             LessonWsEvent::PresentationUpdated { presentation_id } => {
-                let prev = state.current_presentation_id;
-                let changed = prev != Some(presentation_id);
+                // INFO should be user-facing; keep internal diff details out of INFO.
                 tracing::info!(
                     lesson_id = lesson.lesson_id.0.get(),
-                    prev_presentation_id = ?prev,
                     presentation_id = presentation_id,
-                    changed = changed,
-                    "presentation updated"
+                    "检测到新的 PPT"
                 );
                 state.current_presentation_id = Some(presentation_id);
                 let _ = event.1.send(CoreEvent::PresentationUpdated {
@@ -447,7 +444,7 @@ impl MonitorEngine for CoreMonitorEngine {
                         };
 
                         if let Ok(history_problems) = api_for_lesson.get_lesson_problems(&session_for_lesson, lesson_clone.lesson_id).await {
-                            tracing::info!(
+                            tracing::debug!(
                                 lesson_id = lesson_clone.lesson_id.0.get(),
                                 problems = history_problems.len(),
                                 "ppt problems loaded"

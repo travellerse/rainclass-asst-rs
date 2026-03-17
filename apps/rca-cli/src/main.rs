@@ -303,13 +303,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::StartMonitor => {
             app.handle_command(AppCommand::StartMonitor).await?;
-            info!("监控已启动");
+            info!("监控已启动。");
             let state = app.handle_query(AppQuery::GetAppState).await?;
             print_state(state)?;
         }
         Command::StopMonitor => {
             app.handle_command(AppCommand::StopMonitor).await?;
-            info!("监控已停止");
+            info!("监控已停止。");
         }
         Command::Monitor {
             duration_secs,
@@ -319,9 +319,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut downloaded_presentations = std::collections::HashSet::new();
             app.handle_command(AppCommand::StartMonitor).await?;
             if let Some(secs) = duration_secs {
-                info!("监控已启动，持续 {secs} 秒。按 Ctrl+C 可提前退出。");
+                info!("监控已启动，将持续 {secs} 秒。按 Ctrl+C 可提前退出。");
             } else {
-                info!("监控已启动 (守护模式，无限期运行)。按 Ctrl+C 退出。");
+                info!("监控已启动（守护模式，将持续运行）。按 Ctrl+C 退出。");
             }
 
             let deadline = duration_secs.map(|secs| Instant::now() + Duration::from_secs(secs));
@@ -335,11 +335,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         if let Some(event) = maybe_event {
                             match &event {
                                 rca_core::app::AppEvent::Notification(n) => {
-                                    tracing::info!("System Notification - {}: {}", n.title, n.body);
+                                    // INFO should be user-facing.
+                                    tracing::info!("{}：{}", n.title, n.body);
                                 }
                                 rca_core::app::AppEvent::StateChanged(state) => {
                                     if let Some(err) = state.last_error.as_deref() {
-                                        tracing::error!("Core Engine Error: {}", err);
+                                        tracing::error!("{}", err);
                                     }
                                 }
                                 rca_core::app::AppEvent::PresentationDiscovered {
@@ -382,7 +383,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             app.handle_command(AppCommand::StopMonitor).await?;
-            info!("监控已停止");
+            info!("监控已停止。");
         }
         Command::Logout => {
             app.handle_command(AppCommand::Logout).await?;

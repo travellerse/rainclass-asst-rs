@@ -70,9 +70,11 @@ pub fn init_logger(log_dir: PathBuf, default_level: &str) -> Vec<WorkerGuard> {
     // Console layer
     let console_layer = fmt::layer()
         .with_ansi(true)
-        .with_target(true)
+        // Console output should be user-facing by default.
+        // Keep targets/line numbers in log files, but hide them on console.
+        .with_target(false)
         .with_thread_ids(false)
-        .with_line_number(true)
+        .with_line_number(false)
         .with_filter(env_filter);
 
     // Error appender matches ERROR (and FATAL since we use target FATAL with ERROR level)
