@@ -6,6 +6,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
+use crate::app::notify_event_keys;
 use crate::app::ports::{
     ApiPort, ConfigStorePort, NotifierPort, SessionStorePort, UpdateCheckerPort,
 };
@@ -126,7 +127,7 @@ impl AppServiceImpl {
                             if guard.config.notify_enabled {
                                 let maybe_notify = match &event {
                                     CoreEvent::AutoAnswerSubmitted { lesson_id, problem_id } => Some((
-                                        "auto_answer_submitted",
+                                        notify_event_keys::AUTO_ANSWER_SUBMITTED,
                                         AppNotification {
                                             title: "自动答题".to_string(),
                                             body: format!(
@@ -137,7 +138,7 @@ impl AppServiceImpl {
                                         },
                                     )),
                                     CoreEvent::AutoCheckinSubmitted { lesson_id, checkin_id } => Some((
-                                        "auto_checkin_submitted",
+                                        notify_event_keys::AUTO_CHECKIN_SUBMITTED,
                                         AppNotification {
                                             title: "自动签到".to_string(),
                                             body: format!(
@@ -148,7 +149,7 @@ impl AppServiceImpl {
                                         },
                                     )),
                                     CoreEvent::CallPaused { lesson_id, target_name } => Some((
-                                        "call_paused",
+                                        notify_event_keys::CALL_PAUSED,
                                         AppNotification {
                                             title: "老师正在点名".to_string(),
                                             body: format!(
@@ -277,7 +278,9 @@ impl AppServiceImpl {
                 let inner = self.inner.lock().expect("core app state poisoned");
                 inner.config.clone()
             };
-            if config.notify_enabled && Self::notify_event_enabled(&config, "login_success") {
+            if config.notify_enabled
+                && Self::notify_event_enabled(&config, notify_event_keys::LOGIN_SUCCESS)
+            {
                 self.deps
                     .notifier
                     .notify(message.clone())
