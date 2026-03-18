@@ -1,11 +1,8 @@
 use std::path::Path;
 
 // We keep these tests simple and local to `rca-infra`.
-// The implementation lives in `YktApiPort` but we test the behavior via
-// small helper wrappers here to avoid coupling tests to HTTP/network.
 
 fn sanitize_filename_component(input: &str) -> String {
-    // Mirror the production behavior (keep in sync with core_port.rs).
     let replaced = input
         .replace(['\u{0000}', '/', '\\'], "_")
         .replace([':', '*', '?', '"', '<', '>', '|'], "_")
