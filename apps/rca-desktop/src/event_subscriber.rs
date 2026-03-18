@@ -4,7 +4,8 @@ use slint::Weak;
 use tokio::time::{Duration, Instant, sleep};
 
 use crate::app_controller::DesktopController;
-use rca_core::app::{AppEvent, AppQueryResult, AppService};
+use crate::command_runner::CommandRunner;
+use rca_core::app::{AppEvent, AppService};
 
 fn should_refresh_ui_on_event() -> bool {
     true
@@ -14,7 +15,7 @@ fn should_refresh_ui_on_event() -> bool {
 /// state sync whenever a new event arrives.
 pub fn start_event_loop(controller: Arc<DesktopController>, ui_handle: Weak<crate::AppWindow>) {
     let mut rx = controller.app.subscribe_events();
-    let ctrl = controller.clone();
+    let runner = CommandRunner::new(controller.clone());
     controller.spawn_task(async move {
         let mut dirty = false;
         let mut last_change = Instant::now();
@@ -44,24 +45,11 @@ pub fn start_event_loop(controller: Arc<DesktopController>, ui_handle: Weak<crat
 
                     // 优先使用事件携带的快照，避免每次刷新都向 core 发起查询。
                     // 若期间未收到 StateChanged（例如未来新增事件类型），再回退到查询。
-                    let state = if let Some(state) = latest_state.take() {
-                        Ok(state)
+                    if let Some(state) = latest_state.take() {
+                        runner.apply_state(ui_handle.clone(), state);
                     } else {
-                        match ctrl.get_state().await {
-                            Ok(AppQueryResult::State(state)) => Ok(state),
-                            Ok(_) => Err("状态查询返回类型异常".to_string()),
-                            Err(e) => Err(format!("状态查询失败: {e}")),
-                        }
-                    };
-                    let ui_h = ui_handle.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_h.upgrade() {
-                            match state {
-                                Ok(state) => crate::ui_helpers::apply_state_to_ui(&ui, &state),
-                                Err(err) => ui.set_last_error_text(err.into()),
-                            }
-                        }
-                    });
+                        runner.refresh_state(ui_handle.clone());
+                    }
                 }
             }
         }

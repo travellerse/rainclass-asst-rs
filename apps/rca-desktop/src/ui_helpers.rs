@@ -1,9 +1,7 @@
 use chrono::Local;
-use rca_core::app::AppQueryResult;
 use rca_core::app::AppState;
 use rca_core::auth::AuthState;
 use rca_core::monitor::CoreEvent;
-use slint::ComponentHandle;
 
 use crate::slint_generatedAppWindow::{EventRow as UiEventRow, LessonRow as UiLessonRow};
 
@@ -184,62 +182,16 @@ pub fn apply_state_to_ui(ui: &crate::AppWindow, state: &AppState) {
     ui.set_events(slint::ModelRc::new(slint::VecModel::from(event_model)));
 }
 
-/// Update the Slint UI to reflect the current application state.
-///
-/// This function is synchronous since Slint callbacks execute on the
-/// UI thread. It uses the controller's runtime to wait for the query result.
-pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::DesktopController) {
-    let ui_handle = ui.as_weak();
-    let controller = controller.clone();
-    controller.clone().spawn_task(async move {
-        let state = match controller.get_state().await {
-            Ok(AppQueryResult::State(state)) => Ok(state),
-            Ok(_) => Err("状态查询返回类型异常".to_string()),
-            Err(e) => Err(format!("状态查询失败: {e}")),
-        };
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                match state {
-                    Ok(state) => apply_state_to_ui(&ui, &state),
-                    Err(err) => ui.set_last_error_text(err.into()),
-                }
-            }
-        });
-    });
-}
-
-/// Synchronize configuration values from the app to the UI form fields.
-pub fn sync_config_to_ui(
-    ui: &crate::AppWindow,
-    controller: &crate::app_controller::DesktopController,
-) {
-    let ui_handle = ui.as_weak();
-    let controller = controller.clone();
-    controller.clone().spawn_task(async move {
-        let config = match controller.get_config().await {
-            Ok(AppQueryResult::Config(config)) => Ok(config),
-            Ok(_) => Err("配置查询返回类型异常".to_string()),
-            Err(e) => Err(format!("配置查询失败: {e}")),
-        };
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = ui_handle.upgrade() {
-                match config {
-                    Ok(config) => {
-                        ui.set_setting_monitor_interval(config.monitor_interval_secs as i32);
-                        ui.set_setting_auto_checkin(config.auto_checkin_enabled);
-                        ui.set_setting_auto_answer(config.auto_answer_enabled);
-                        ui.set_setting_auto_answer_random_guess(config.auto_answer_random_guess);
-                        ui.set_setting_answer_delay(config.answer_delay_ms as i32);
-                        ui.set_setting_notify_enabled(config.notify_enabled);
-                        ui.set_setting_webhook_url(config.webhook_url.into());
-                        ui.set_setting_check_update_on_startup(config.check_update_on_startup);
-                        ui.set_setting_active_tenant(config.tenant.as_config_string().into());
-                    }
-                    Err(err) => ui.set_last_error_text(err.into()),
-                }
-            }
-        });
-    });
+pub fn apply_config_to_ui(ui: &crate::AppWindow, config: &rca_core::app::AppConfigDto) {
+    ui.set_setting_monitor_interval(config.monitor_interval_secs as i32);
+    ui.set_setting_auto_checkin(config.auto_checkin_enabled);
+    ui.set_setting_auto_answer(config.auto_answer_enabled);
+    ui.set_setting_auto_answer_random_guess(config.auto_answer_random_guess);
+    ui.set_setting_answer_delay(config.answer_delay_ms as i32);
+    ui.set_setting_notify_enabled(config.notify_enabled);
+    ui.set_setting_webhook_url(config.webhook_url.clone().into());
+    ui.set_setting_check_update_on_startup(config.check_update_on_startup);
+    ui.set_setting_active_tenant(config.tenant.as_config_string().into());
 }
 
 #[cfg(test)]
