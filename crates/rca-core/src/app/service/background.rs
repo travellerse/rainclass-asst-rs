@@ -10,6 +10,54 @@ use crate::monitor::CoreEvent;
 
 use super::AppServiceImpl;
 
+fn notification_from_event(event: &CoreEvent) -> Option<(&'static str, AppNotification)> {
+    match event {
+        CoreEvent::AutoAnswerSubmitted {
+            lesson_id,
+            problem_id,
+        } => Some((
+            notify_event_keys::AUTO_ANSWER_SUBMITTED,
+            AppNotification {
+                title: "自动答题".to_string(),
+                body: format!(
+                    "已成功提交自动答题！(课程 {}, 题目 {})",
+                    lesson_id.0.get(),
+                    problem_id.0.get()
+                ),
+            },
+        )),
+        CoreEvent::AutoCheckinSubmitted {
+            lesson_id,
+            checkin_id,
+        } => Some((
+            notify_event_keys::AUTO_CHECKIN_SUBMITTED,
+            AppNotification {
+                title: "自动签到".to_string(),
+                body: format!(
+                    "已成功自动签到！(课程 {}, 签到 {})",
+                    lesson_id.0.get(),
+                    checkin_id.0.get()
+                ),
+            },
+        )),
+        CoreEvent::CallPaused {
+            lesson_id,
+            target_name,
+        } => Some((
+            notify_event_keys::CALL_PAUSED,
+            AppNotification {
+                title: "老师正在点名".to_string(),
+                body: format!(
+                    "老师正在点名：{}！(课程 {})",
+                    target_name,
+                    lesson_id.0.get()
+                ),
+            },
+        )),
+        _ => None,
+    }
+}
+
 pub(super) struct CoreBackgroundTasks {
     shutdown: Option<oneshot::Sender<()>>,
     join: JoinHandle<()>,
@@ -67,52 +115,14 @@ pub(super) fn start_background_tasks(service: &AppServiceImpl) {
                             });
                         }
 
-                        if guard.config.notify_enabled {
-                            let maybe_notify = match &event {
-                                CoreEvent::AutoAnswerSubmitted { lesson_id, problem_id } => Some((
-                                    notify_event_keys::AUTO_ANSWER_SUBMITTED,
-                                    AppNotification {
-                                        title: "自动答题".to_string(),
-                                        body: format!(
-                                            "已成功提交自动答题！(课程 {}, 题目 {})",
-                                            lesson_id.0.get(),
-                                            problem_id.0.get()
-                                        ),
-                                    },
-                                )),
-                                CoreEvent::AutoCheckinSubmitted { lesson_id, checkin_id } => Some((
-                                    notify_event_keys::AUTO_CHECKIN_SUBMITTED,
-                                    AppNotification {
-                                        title: "自动签到".to_string(),
-                                        body: format!(
-                                            "已成功自动签到！(课程 {}, 签到 {})",
-                                            lesson_id.0.get(),
-                                            checkin_id.0.get()
-                                        ),
-                                    },
-                                )),
-                                CoreEvent::CallPaused { lesson_id, target_name } => Some((
-                                    notify_event_keys::CALL_PAUSED,
-                                    AppNotification {
-                                        title: "老师正在点名".to_string(),
-                                        body: format!(
-                                            "老师正在点名：{}！(课程 {})",
-                                            target_name,
-                                            lesson_id.0.get()
-                                        ),
-                                    },
-                                )),
-                                _ => None,
-                            };
-
-                            if let Some((event_key, msg)) = maybe_notify
-                                && AppServiceImpl::notify_event_enabled(&guard.config, event_key)
-                            {
-                                let notifier_clone = notifier.clone();
-                                tokio::spawn(async move {
-                                    let _ = notifier_clone.notify(msg).await;
-                                });
-                            }
+                        if guard.config.notify_enabled
+                            && let Some((event_key, msg)) = notification_from_event(&event)
+                            && AppServiceImpl::notify_event_enabled(&guard.config, event_key)
+                        {
+                            let notifier_clone = notifier.clone();
+                            tokio::spawn(async move {
+                                let _ = notifier_clone.notify(msg).await;
+                            });
                         }
                     }
                     AppServiceImpl::emit_state_changed_with_inner(&inner_clone).await;
