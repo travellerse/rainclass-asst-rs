@@ -1,21 +1,51 @@
 use std::error::Error;
+use std::future::Future;
 use std::sync::Arc;
+use std::sync::Mutex;
 
+use rca_app::{BootstrapOptions, NotifierMode, StartupActions};
 use rca_core::app::{
-    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, CoreAppService,
+    AppCommand, AppConfigDto, AppQuery, AppQueryResult, AppService, AppServiceImpl,
 };
-use rca_infra::storage::ConfigRepository;
+
+use tokio::task::JoinHandle;
+
+#[derive(Default)]
+struct TaskGroup {
+    handles: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl TaskGroup {
+    fn spawn<F>(&self, runtime: &tokio::runtime::Runtime, fut: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        let handle = runtime.spawn(fut);
+        self.handles
+            .lock()
+            .expect("task group poisoned")
+            .push(handle);
+    }
+
+    fn abort_all(&self) {
+        let handles = std::mem::take(&mut *self.handles.lock().expect("task group poisoned"));
+        for handle in handles {
+            handle.abort();
+        }
+    }
+}
 
 /// High-level controller that encapsulates the core application service and
 /// Tokio runtime.  UI callbacks interact with this object instead of talking
-/// directly to `CoreAppService`.
+/// directly to the core `AppService` implementation.
 #[derive(Clone)]
-pub struct AppController {
-    pub app: Arc<CoreAppService>,
+pub struct DesktopController {
+    pub app: Arc<AppServiceImpl>,
     pub runtime: Arc<tokio::runtime::Runtime>,
+    tasks: Arc<TaskGroup>,
 }
 
-impl AppController {
+impl DesktopController {
     /// Application default configuration used when no existing config is found.
     ///
     /// Copied from the original `main.rs` helper.
@@ -25,87 +55,18 @@ impl AppController {
 
     /// Bootstraps the dependencies and returns a ready-to-use controller.
     pub fn bootstrap() -> Result<Self, Box<dyn Error>> {
-        // replicate initialization logic from original main.rs
         let runtime = Arc::new(tokio::runtime::Runtime::new()?);
+        let app = runtime.block_on(rca_app::bootstrap_core_app(BootstrapOptions {
+            default_config: Self::default_config(),
+            notifier_mode: NotifierMode::Desktop,
+            startup: StartupActions::desktop_default(),
+        }))?;
 
-        let paths = rca_infra::storage::AppPaths::detect()?;
-        let config_repo = Arc::new(rca_infra::storage::JsonFileConfigRepository::new(
-            paths.config_file,
-        ));
-        let session_repo = Arc::new(rca_infra::storage::JsonFileSessionRepository::new(
-            paths.session_file,
-        ));
-        let credential_store = Arc::new(rca_infra::storage::KeyringCredentialStore);
-
-        let initial_config = runtime.block_on(config_repo.load()).ok();
-
-        let initial_tenant = initial_config
-            .as_ref()
-            .map(|cfg| match cfg.active_tenant {
-                rca_infra::storage::TenantKind::Rain => rca_infra::api::TenantHost::Rain,
-                rca_infra::storage::TenantKind::Hetang => rca_infra::api::TenantHost::Hetang,
-                rca_infra::storage::TenantKind::Yangtze => rca_infra::api::TenantHost::Yangtze,
-                rca_infra::storage::TenantKind::YellowRiver => {
-                    rca_infra::api::TenantHost::YellowRiver
-                }
-            })
-            .unwrap_or(rca_infra::api::TenantHost::Hetang);
-
-        let notifiers: Vec<Box<dyn rca_infra::notify::Notifier>> = vec![
-            Box::new(rca_infra::notify::LoggingNotifier),
-            Box::new(rca_infra::notify::DesktopNotifier::new()),
-            Box::new(rca_infra::notify::ConfigWebhookNotifier::new(
-                config_repo.clone(),
-            )),
-        ];
-
-        let notifier = Arc::new(rca_infra::notify::MultiNotifier::new(notifiers));
-
-        let update_checker = Arc::new(rca_infra::update::GithubReleaseChecker::new(
-            "travellerse",
-            "RainClassroomAssistant",
-        )?);
-
-        let api_port: Arc<dyn rca_core::app::ports::ApiPort> = Arc::new(
-            rca_infra::api::YktApiPort::new(rca_infra::api::YktApiPortConfig {
-                tenant: initial_tenant,
-                timeout_secs: 15,
-            })?,
-        );
-
-        let config_port = Arc::new(rca_infra::bridge::CoreConfigStoreAdapter::new(config_repo));
-        let session_port = Arc::new(rca_infra::bridge::CoreSessionStoreAdapter::new(
-            session_repo,
-            credential_store,
-        ));
-        let notify_port = Arc::new(rca_infra::bridge::CoreNotifierAdapter::new(notifier));
-        let update_port = Arc::new(rca_infra::bridge::CoreUpdateCheckerAdapter::new(
-            update_checker,
-        ));
-
-        let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
-
-        let app = {
-            let _guard = runtime.enter();
-            Arc::new(CoreAppService::new(
-                rca_core::app::CoreAppDeps {
-                    api: api_port,
-                    config_store: config_port,
-                    session_store: session_port,
-                    notifier: notify_port,
-                    update_checker: update_port,
-                    monitor_engine: monitor,
-                },
-                Self::default_config(),
-            ))
-        };
-
-        // bootstrap commands
-        let _ = runtime.block_on(app.handle_command(AppCommand::LoadConfig));
-        let _ = runtime.block_on(app.handle_command(AppCommand::RestoreSession));
-        let _ = runtime.block_on(app.handle_command(AppCommand::RefreshSession));
-
-        Ok(AppController { app, runtime })
+        Ok(DesktopController {
+            app,
+            runtime,
+            tasks: Arc::new(TaskGroup::default()),
+        })
     }
 
     /// Query current application state.
@@ -123,5 +84,20 @@ impl AppController {
 
     pub async fn check_update(&self) -> Result<(), rca_core::app::AppError> {
         self.app.handle_command(AppCommand::CheckUpdate).await
+    }
+
+    pub fn spawn_task<F>(&self, fut: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
+        self.tasks.spawn(&self.runtime, fut);
+    }
+
+    pub fn shutdown(&self) {
+        self.tasks.abort_all();
+        let _ = self
+            .runtime
+            .block_on(self.app.handle_command(AppCommand::StopMonitor));
+        self.app.stop_background_tasks();
     }
 }

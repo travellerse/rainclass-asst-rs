@@ -5,11 +5,14 @@ pub mod event_bus;
 pub mod ports;
 pub mod query;
 pub mod service;
+pub mod tenant;
 pub mod usecases;
 
 pub use app_state::*;
 pub use command::*;
 pub use errors::*;
 pub use query::*;
+pub use service::AppServiceImpl;
 pub use service::*;
+pub use tenant::*;
 pub use usecases::*;

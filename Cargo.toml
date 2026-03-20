@@ -2,6 +2,7 @@
 members = [
 	"apps/rca-cli",
 	"apps/rca-desktop",
+	"crates/rca-app",
 	"crates/rca-core",
 	"crates/rca-infra",
 	"xtask",

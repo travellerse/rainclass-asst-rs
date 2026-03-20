@@ -1,26 +1,13 @@
 use std::error::Error;
-use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use image::DynamicImage;
 use qrcode::QrCode;
 use qrcode::render::unicode;
 use rca_core::app::{
-    AppCommand, AppConfigDto, AppEvent, AppQuery, AppQueryResult, AppService, CoreAppDeps,
-    CoreAppService,
+    AppCommand, AppConfigDto, AppEvent, AppQuery, AppQueryResult, AppService, TenantKind,
 };
 use rca_core::auth::AuthState;
-use rca_infra::api::{YktApiPort, YktApiPortConfig};
-use rca_infra::bridge::{
-    CoreConfigStoreAdapter, CoreNotifierAdapter, CoreSessionStoreAdapter, CoreUpdateCheckerAdapter,
-};
-use rca_infra::notify::LoggingNotifier;
-
-use rca_infra::storage::{
-    AppPaths, ConfigRepository, JsonFileConfigRepository, JsonFileSessionRepository,
-    KeyringCredentialStore,
-};
-use rca_infra::update::GithubReleaseChecker;
 use tokio::time::{Duration, Instant, sleep};
 use tracing::info;
 
@@ -206,51 +193,6 @@ fn print_login_qr(payload: &str) {
     }
 }
 
-async fn bootstrap_app() -> Result<Arc<CoreAppService>, Box<dyn Error>> {
-    let paths = AppPaths::detect()?;
-    let config_repo = Arc::new(JsonFileConfigRepository::new(paths.config_file));
-    let session_repo = Arc::new(JsonFileSessionRepository::new(paths.session_file));
-    let credential_store = Arc::new(KeyringCredentialStore);
-    let notifier = Arc::new(LoggingNotifier);
-    let update_checker = Arc::new(GithubReleaseChecker::new(
-        "travellerse",
-        "RainClassroomAssistant",
-    )?);
-
-    let initial_config = config_repo.load().await.ok();
-    let initial_tenant = initial_config
-        .as_ref()
-        .map(|cfg| match cfg.active_tenant {
-            rca_infra::storage::TenantKind::Rain => rca_infra::api::TenantHost::Rain,
-            rca_infra::storage::TenantKind::Hetang => rca_infra::api::TenantHost::Hetang,
-            rca_infra::storage::TenantKind::Yangtze => rca_infra::api::TenantHost::Yangtze,
-            rca_infra::storage::TenantKind::YellowRiver => rca_infra::api::TenantHost::YellowRiver,
-        })
-        .unwrap_or(rca_infra::api::TenantHost::Hetang);
-
-    let api_port: Arc<dyn rca_core::app::ports::ApiPort> =
-        Arc::new(YktApiPort::new(YktApiPortConfig {
-            tenant: initial_tenant,
-            timeout_secs: 15,
-        })?);
-
-    let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
-
-    let app = Arc::new(CoreAppService::new(
-        CoreAppDeps {
-            api: api_port,
-            config_store: Arc::new(CoreConfigStoreAdapter::new(config_repo)),
-            session_store: Arc::new(CoreSessionStoreAdapter::new(session_repo, credential_store)),
-            notifier: Arc::new(CoreNotifierAdapter::new(notifier)),
-            update_checker: Arc::new(CoreUpdateCheckerAdapter::new(update_checker)),
-            monitor_engine: monitor,
-        },
-        default_config(),
-    ));
-
-    Ok(app)
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -260,16 +202,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         _ => "trace",
     };
 
-    let log_dir = match rca_infra::storage::AppPaths::detect() {
-        Ok(paths) => paths.log_dir,
-        Err(_) => std::env::current_dir().unwrap_or_default().join("logs"),
-    };
-    let _log_guards = rca_infra::log::init_logger(log_dir, default_level);
-
-    let app = bootstrap_app().await?;
-
-    app.handle_command(AppCommand::LoadConfig).await?;
-    app.handle_command(AppCommand::RestoreSession).await?;
+    let _log_guards = rca_app::init_default_logger(default_level);
+    let app = rca_app::bootstrap_core_app(rca_app::BootstrapOptions {
+        default_config: default_config(),
+        notifier_mode: rca_app::NotifierMode::Cli,
+        startup: rca_app::StartupActions::cli_default(),
+    })
+    .await?;
 
     match cli.command {
         Command::Status => {
@@ -307,7 +246,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let timeout_secs = (attempts as u64)
                 .saturating_mul(interval_secs.max(1))
                 .max(1);
-            app.handle_command(AppCommand::WaitLogin {
+            app.handle_command(AppCommand::AwaitLogin {
                 scene_id,
                 timeout_secs,
             })
@@ -364,13 +303,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         Command::StartMonitor => {
             app.handle_command(AppCommand::StartMonitor).await?;
-            info!("监控已启动");
+            info!("监控已启动。");
             let state = app.handle_query(AppQuery::GetAppState).await?;
             print_state(state)?;
         }
         Command::StopMonitor => {
             app.handle_command(AppCommand::StopMonitor).await?;
-            info!("监控已停止");
+            info!("监控已停止。");
         }
         Command::Monitor {
             duration_secs,
@@ -380,9 +319,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let mut downloaded_presentations = std::collections::HashSet::new();
             app.handle_command(AppCommand::StartMonitor).await?;
             if let Some(secs) = duration_secs {
-                info!("监控已启动，持续 {secs} 秒。按 Ctrl+C 可提前退出。");
+                info!("监控已启动，将持续 {secs} 秒。按 Ctrl+C 可提前退出。");
             } else {
-                info!("监控已启动 (守护模式，无限期运行)。按 Ctrl+C 退出。");
+                info!("监控已启动（守护模式，将持续运行）。按 Ctrl+C 退出。");
             }
 
             let deadline = duration_secs.map(|secs| Instant::now() + Duration::from_secs(secs));
@@ -396,11 +335,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         if let Some(event) = maybe_event {
                             match &event {
                                 rca_core::app::AppEvent::Notification(n) => {
-                                    tracing::info!("System Notification - {}: {}", n.title, n.body);
+                                    // INFO should be user-facing.
+                                    tracing::info!("{}：{}", n.title, n.body);
                                 }
                                 rca_core::app::AppEvent::StateChanged(state) => {
                                     if let Some(err) = state.last_error.as_deref() {
-                                        tracing::error!("Core Engine Error: {}", err);
+                                        tracing::error!("{}", err);
                                     }
                                 }
                                 rca_core::app::AppEvent::PresentationDiscovered {
@@ -443,7 +383,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
 
             app.handle_command(AppCommand::StopMonitor).await?;
-            info!("监控已停止");
+            info!("监控已停止。");
         }
         Command::Logout => {
             app.handle_command(AppCommand::Logout).await?;
@@ -457,34 +397,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             ConfigCommand::SetTenant { tenant } => {
-                let valid_tenants = [
-                    "rain",
-                    "hetang",
-                    "yangtze",
-                    "yellow-river",
-                    "Rain",
-                    "Hetang",
-                    "Yangtze",
-                    "YellowRiver",
-                ];
-                if !valid_tenants.contains(&tenant.as_str()) {
-                    return Err(
-                        format!("不支持的服务器: {tenant}。支持的值: {valid_tenants:?}").into(),
-                    );
-                }
-
-                // Title case the tenant for uniform config behavior across UI/CLI.
-                let tenant = match tenant.to_lowercase().as_str() {
-                    "rain" => "Rain".to_string(),
-                    "hetang" => "Hetang".to_string(),
-                    "yangtze" => "Yangtze".to_string(),
-                    "yellow-river" => "YellowRiver".to_string(),
-                    _ => unreachable!(),
+                let Some(kind) = TenantKind::parse_config_str(&tenant) else {
+                    return Err(format!(
+                        "不支持的服务器: {tenant}。支持的值: Rain/Hetang/Yangtze/YellowRiver"
+                    )
+                    .into());
                 };
+                let tenant = kind.as_config_string();
 
                 let state = app.handle_query(AppQuery::GetConfig).await?;
                 if let AppQueryResult::Config(mut config) = state {
-                    config.tenant = tenant.clone();
+                    config.tenant = kind;
                     app.handle_command(AppCommand::SaveConfig { config })
                         .await?;
                     println!("成功将服务器切换为 {}", tenant);

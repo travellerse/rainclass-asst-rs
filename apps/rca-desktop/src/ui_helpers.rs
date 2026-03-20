@@ -1,5 +1,5 @@
 use chrono::Local;
-use rca_core::app::AppQueryResult;
+use rca_core::app::AppState;
 use rca_core::auth::AuthState;
 use rca_core::monitor::CoreEvent;
 
@@ -131,86 +131,67 @@ pub fn format_core_event(event: &CoreEvent) -> (&'static str, String) {
     }
 }
 
-/// Update the Slint UI to reflect the current application state.
-///
-/// This function is synchronous since Slint callbacks execute on the
-/// UI thread. It uses the controller's runtime to wait for the query result.
-pub fn sync_ui_state(ui: &crate::AppWindow, controller: &crate::app_controller::AppController) {
-    let result = controller.runtime.block_on(controller.get_state());
-    match result {
-        Ok(AppQueryResult::State(state)) => {
-            ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
-            ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
+pub fn apply_state_to_ui(ui: &crate::AppWindow, state: &AppState) {
+    ui.set_auth_status_text(auth_status_text(&state.auth_state).into());
+    ui.set_auth_status_kind(auth_status_kind(&state.auth_state).into());
 
-            ui.set_monitor_running(state.monitor_running);
-            ui.set_monitor_status_text(
-                if state.monitor_running {
-                    "运行中"
-                } else {
-                    "未启动"
-                }
-                .into(),
-            );
-            ui.set_last_error_text(state.last_error.unwrap_or_default().into());
-
-            let lesson_model: Vec<UiLessonRow> = state
-                .current_lessons
-                .iter()
-                .map(|l| UiLessonRow {
-                    course_name: l.course_name.clone().into(),
-                    teacher_name: l.teacher_name.clone().into(),
-                    status: lesson_status_text(&l.status).into(),
-                })
-                .collect();
-            ui.set_lessons(slint::ModelRc::new(slint::VecModel::from(lesson_model)));
-
-            let current_selected = ui.get_selected_lesson_index();
-            let lesson_count = state.current_lessons.len() as i32;
-            if lesson_count <= 0 {
-                ui.set_selected_lesson_index(-1);
-            } else if current_selected < 0 || current_selected >= lesson_count {
-                ui.set_selected_lesson_index(0);
-            }
-
-            let event_model: Vec<UiEventRow> = state
-                .recent_events
-                .iter()
-                .rev()
-                .take(100)
-                .map(|e| {
-                    let (kind, message) = format_core_event(e);
-                    UiEventRow {
-                        timestamp: Local::now().format("%H:%M:%S").to_string().into(),
-                        kind: kind.into(),
-                        message: message.into(),
-                    }
-                })
-                .collect();
-            ui.set_events(slint::ModelRc::new(slint::VecModel::from(event_model)));
+    ui.set_monitor_running(state.monitor_running);
+    ui.set_monitor_status_text(
+        if state.monitor_running {
+            "运行中"
+        } else {
+            "未启动"
         }
-        Ok(_) => {
-            ui.set_last_error_text("状态查询返回类型异常".into());
-        }
-        Err(error) => {
-            ui.set_last_error_text(format!("状态查询失败: {error}").into());
-        }
+        .into(),
+    );
+    ui.set_last_error_text(state.last_error.clone().unwrap_or_default().into());
+
+    let lesson_model: Vec<UiLessonRow> = state
+        .current_lessons
+        .iter()
+        .map(|l| UiLessonRow {
+            course_name: l.course_name.clone().into(),
+            teacher_name: l.teacher_name.clone().into(),
+            status: lesson_status_text(&l.status).into(),
+        })
+        .collect();
+    ui.set_lessons(slint::ModelRc::new(slint::VecModel::from(lesson_model)));
+
+    let current_selected = ui.get_selected_lesson_index();
+    let lesson_count = state.current_lessons.len() as i32;
+    if lesson_count <= 0 {
+        ui.set_selected_lesson_index(-1);
+    } else if current_selected < 0 || current_selected >= lesson_count {
+        ui.set_selected_lesson_index(0);
     }
+
+    let event_model: Vec<UiEventRow> = state
+        .recent_events
+        .iter()
+        .rev()
+        .take(100)
+        .map(|e| {
+            let (kind, message) = format_core_event(e);
+            UiEventRow {
+                timestamp: Local::now().format("%H:%M:%S").to_string().into(),
+                kind: kind.into(),
+                message: message.into(),
+            }
+        })
+        .collect();
+    ui.set_events(slint::ModelRc::new(slint::VecModel::from(event_model)));
 }
 
-/// Synchronize configuration values from the app to the UI form fields.
-pub fn sync_config_to_ui(ui: &crate::AppWindow, controller: &crate::app_controller::AppController) {
-    let result = controller.runtime.block_on(controller.get_config());
-    if let Ok(AppQueryResult::Config(config)) = result {
-        ui.set_setting_monitor_interval(config.monitor_interval_secs as i32);
-        ui.set_setting_auto_checkin(config.auto_checkin_enabled);
-        ui.set_setting_auto_answer(config.auto_answer_enabled);
-        ui.set_setting_auto_answer_random_guess(config.auto_answer_random_guess);
-        ui.set_setting_answer_delay(config.answer_delay_ms as i32);
-        ui.set_setting_notify_enabled(config.notify_enabled);
-        ui.set_setting_webhook_url(config.webhook_url.into());
-        ui.set_setting_check_update_on_startup(config.check_update_on_startup);
-        ui.set_setting_active_tenant(config.tenant.into());
-    }
+pub fn apply_config_to_ui(ui: &crate::AppWindow, config: &rca_core::app::AppConfigDto) {
+    ui.set_setting_monitor_interval(config.monitor_interval_secs as i32);
+    ui.set_setting_auto_checkin(config.auto_checkin_enabled);
+    ui.set_setting_auto_answer(config.auto_answer_enabled);
+    ui.set_setting_auto_answer_random_guess(config.auto_answer_random_guess);
+    ui.set_setting_answer_delay(config.answer_delay_ms as i32);
+    ui.set_setting_notify_enabled(config.notify_enabled);
+    ui.set_setting_webhook_url(config.webhook_url.clone().into());
+    ui.set_setting_check_update_on_startup(config.check_update_on_startup);
+    ui.set_setting_active_tenant(config.tenant.as_config_string().into());
 }
 
 #[cfg(test)]

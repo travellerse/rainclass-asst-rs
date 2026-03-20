@@ -262,7 +262,7 @@ impl YktApiPort {
     fn session_headers(&self, session: &AuthSession) -> Result<HeaderMap, ApiError> {
         let mut headers = HeaderMap::new();
         let cookie = format!("sessionid={}", session.access_token);
-        tracing::trace!(
+        tracing::debug!(
             token_len = session.access_token.len(),
             "attaching session cookie"
         );
@@ -505,7 +505,7 @@ impl RainClassroomWs for YktApiPort {
         let (user_id, bearer_token, lesson_token) =
             self.prepare_lesson_ws_auth(auth, lesson_id).await?;
 
-        let span = tracing::info_span!(
+        let span = tracing::debug_span!(
             target: "rca_infra.ws",
             "connect_lesson_stream",
             host = %self.host,
@@ -544,7 +544,7 @@ impl RainClassroomWs for YktApiPort {
                 .map_err(|err| ApiError::invalid_header("origin", err))?,
         );
 
-        tracing::info!("connecting lesson ws");
+        tracing::debug!("connecting lesson ws");
         let (mut socket, _) = connect_async(request)
             .await
             .map_err(|err| ApiError::ws_connect(err.to_string()))?;
@@ -566,7 +566,7 @@ impl RainClassroomWs for YktApiPort {
             .send(Message::Text(hello.into()))
             .await
             .map_err(|err| ApiError::ws_send(format!("send hello failed: {err}")))?;
-        tracing::info!("lesson ws connected");
+        tracing::debug!("lesson ws connected");
 
         let (tx, rx) = mpsc::channel::<Result<WsEventDto, ApiError>>(128);
         tokio::spawn(async move {
@@ -1184,11 +1184,12 @@ impl ApiPort for YktApiPort {
         self.update_qr_state(&scene_id, QrSceneState::Pending);
 
         let ws_url = format!("wss://{}/wsapp/", self.host);
+        // INFO should be user-facing; keep this as a single high-level message.
         tracing::info!(
             target: "rca_infra.api",
             host = %self.host,
             scene_id = %scene_id,
-            "starting qr login"
+            "开始二维码登录"
         );
         let scene_for_task = scene_id.clone();
         let host = self.host.clone();
@@ -1200,7 +1201,7 @@ impl ApiPort for YktApiPort {
             oneshot::channel::<Result<QrLoginBootstrap, ApiPortError>>();
 
         tokio::spawn(async move {
-            let span = tracing::info_span!(
+            let span = tracing::debug_span!(
                 target: "rca_infra.api",
                 "qr_login_task",
                 host = %host,
@@ -1209,7 +1210,7 @@ impl ApiPort for YktApiPort {
             let _enter = span.enter();
 
             let mut bootstrap_tx = Some(bootstrap_tx);
-            tracing::info!(ws_url = %ws_url, "connecting wsapp");
+            tracing::debug!(ws_url = %ws_url, "connecting wsapp");
             let (mut socket, _) = match connect_async(&ws_url).await {
                 Ok(pair) => pair,
                 Err(err) => {
@@ -1235,7 +1236,7 @@ impl ApiPort for YktApiPort {
             })
             .to_string();
 
-            tracing::info!("requesting qr ticket");
+            tracing::debug!("requesting qr ticket");
             if let Err(err) = socket.send(Message::Text(req.into())).await {
                 Self::update_qr_state_shared(
                     &states,
@@ -1296,7 +1297,7 @@ impl ApiPort for YktApiPort {
                     }
 
                     bootstrap_sent = true;
-                    tracing::info!("qr ticket received");
+                    tracing::debug!("qr ticket received");
                     if let Some(sender) = bootstrap_tx.take() {
                         let _ = sender.send(Ok(QrLoginBootstrap {
                             scene_id: scene_for_task.clone(),
@@ -1329,7 +1330,7 @@ impl ApiPort for YktApiPort {
                     }
 
                     let login_url = format!("https://{host}/pc/web_login");
-                    tracing::info!(user_id = user_id, "exchanging web_login session");
+                    tracing::debug!(user_id = user_id, "exchanging web_login session");
                     let response = match client
                         .post(login_url)
                         .header(USER_AGENT, &user_agent)
@@ -1387,7 +1388,7 @@ impl ApiPort for YktApiPort {
                         &scene_for_task,
                         QrSceneState::Confirmed(session),
                     );
-                    tracing::info!(user_id = user_id, "login confirmed");
+                    tracing::debug!(user_id = user_id, "login confirmed");
                     return;
                 }
             }
@@ -1494,7 +1495,7 @@ impl ApiPort for YktApiPort {
         save_dir: &std::path::Path,
     ) -> Result<std::path::PathBuf, ApiPortError> {
         let started_at = tokio::time::Instant::now();
-        let span = tracing::info_span!(
+        let span = tracing::debug_span!(
             target: "rca_infra.api",
             "download_presentation",
             host = %self.host,
@@ -1508,7 +1509,7 @@ impl ApiPort for YktApiPort {
             .map_err(ApiPortError::protocol)?;
 
         if let Some(lid) = lesson_id {
-            tracing::info!(lesson_id = lid, "performing lesson check-in");
+            tracing::debug!(lesson_id = lid, "performing lesson check-in");
             let checkin_url = format!("https://{}/api/v3/lesson/checkin", self.host);
             let response = self
                 .client
@@ -1528,7 +1529,7 @@ impl ApiPort for YktApiPort {
                 .or_else(|| response.headers().get("Set-Auth"))
                 && let Ok(bearer) = auth_val.to_str()
             {
-                tracing::info!(lesson_id = lid, "acquired lesson bearer token");
+                tracing::debug!(lesson_id = lid, "acquired lesson bearer token");
                 // Defensive: validate format/length to avoid propagating garbage values.
                 let bearer = bearer.trim();
                 if bearer.is_empty() || bearer.len() > 4096 {
@@ -1546,7 +1547,7 @@ impl ApiPort for YktApiPort {
             }
         }
 
-        tracing::info!("fetching presentation metadata");
+        tracing::debug!("fetching presentation metadata");
         let fetch_url = format!(
             "https://{}/api/v3/lesson/presentation/fetch?presentation_id={}",
             self.host, presentation_id
@@ -1560,7 +1561,7 @@ impl ApiPort for YktApiPort {
             .map_err(|err| ApiPortError::request("presentation fetch", err))?;
 
         let status = response.status();
-        tracing::info!(http_status = %status, "presentation metadata response");
+        tracing::debug!(http_status = %status, "presentation metadata response");
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiPortError::protocol(
                 "unauthorized: presentation fetch requires login",
@@ -1606,7 +1607,7 @@ impl ApiPort for YktApiPort {
                 "missing slides array in presentation data",
             ));
         };
-        tracing::info!(
+        tracing::debug!(
             slides = slides.len(),
             width_px = width,
             height_px = height,
@@ -1627,7 +1628,7 @@ impl ApiPort for YktApiPort {
                 "no slide images found in presentation",
             ));
         }
-        tracing::info!(slide_images = slide_urls.len(), "downloading slide images");
+        tracing::debug!(slide_images = slide_urls.len(), "downloading slide images");
 
         use bytes::Bytes;
 
@@ -1702,7 +1703,7 @@ impl ApiPort for YktApiPort {
                 image_bytes_results.push(bytes);
             }
         }
-        tracing::info!(
+        tracing::debug!(
             slide_images = image_bytes_results.len(),
             elapsed_ms = download_started_at.elapsed().as_millis(),
             "slide images downloaded"
@@ -1721,7 +1722,7 @@ impl ApiPort for YktApiPort {
         }
         let save_path = Self::build_safe_output_path(save_dir, &file_name)
             .map_err(|e| ApiPortError::request("build save path", e))?;
-        tracing::info!(path = %save_path.display(), "generating pdf");
+        tracing::debug!(path = %save_path.display(), "generating pdf");
 
         // Build PDF bytes using the shared implementation.
         let pdf_bytes =
@@ -1752,7 +1753,7 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|e| ApiPortError::request("rename pdf tmp", e))?;
 
-        tracing::info!(
+        tracing::debug!(
             bytes = pdf_bytes.len(),
             elapsed_ms = started_at.elapsed().as_millis(),
             "pdf saved"

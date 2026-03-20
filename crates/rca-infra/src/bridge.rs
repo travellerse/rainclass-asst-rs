@@ -11,7 +11,7 @@ use rca_core::auth::AuthSession;
 
 use crate::notify::{Notification, Notifier, NotifyLevel};
 use crate::storage::{
-    AppConfig, ConfigRepository, CredentialStore, SessionRecord, SessionRepository, TenantKind,
+    AppConfig, ConfigRepository, CredentialStore, SessionRecord, SessionRepository,
 };
 use crate::update::UpdateChecker;
 
@@ -90,12 +90,7 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
             notify_events: cfg.notify_events.clone(),
             webhook_url: cfg.webhook_url.clone(),
             check_update_on_startup: cfg.check_update_on_startup,
-            tenant: match cfg.active_tenant {
-                TenantKind::Rain => "Rain".to_string(),
-                TenantKind::Hetang => "Hetang".to_string(),
-                TenantKind::Yangtze => "Yangtze".to_string(),
-                TenantKind::YellowRiver => "YellowRiver".to_string(),
-            },
+            tenant: crate::tenant::core_kind_from_storage_kind(cfg.active_tenant),
             auth_state_hint: None,
         })
     }
@@ -115,13 +110,7 @@ impl ConfigStorePort for CoreConfigStoreAdapter {
             notify_events: config.notify_events.clone(),
             webhook_url: config.webhook_url.clone(),
             check_update_on_startup: config.check_update_on_startup,
-            active_tenant: match config.tenant.as_str() {
-                "Rain" => TenantKind::Rain,
-                "Hetang" => TenantKind::Hetang,
-                "Yangtze" => TenantKind::Yangtze,
-                "YellowRiver" => TenantKind::YellowRiver,
-                _ => TenantKind::Hetang,
-            },
+            active_tenant: crate::tenant::storage_kind_from_core_kind(config.tenant),
         };
         self.inner.save(&cfg).await.map_err(StoragePortError::save)
     }
@@ -265,6 +254,7 @@ mod tests {
     use super::*;
     use crate::notify::NotifyError;
     use crate::storage::StorageError;
+    use crate::storage::TenantKind;
 
     // ── Mocks ──────────────────────────────────────────────────
 
@@ -349,7 +339,7 @@ mod tests {
 
         let adapter = CoreConfigStoreAdapter::new(Arc::new(mock));
         let dto = adapter.load_config().await.unwrap();
-        assert_eq!(dto.tenant, "Rain");
+        assert_eq!(dto.tenant, rca_core::app::TenantKind::Rain);
     }
 
     #[tokio::test]
@@ -361,14 +351,14 @@ mod tests {
 
         let adapter = CoreConfigStoreAdapter::new(Arc::new(mock));
         let dto = rca_core::app::AppConfigDto {
-            tenant: "Yangtze".to_string(),
+            tenant: rca_core::app::TenantKind::Yangtze,
             ..Default::default()
         };
         adapter.save_config(&dto).await.unwrap();
     }
 
     #[tokio::test]
-    async fn config_adapter_save_unknown_tenant_defaults_to_hetang() {
+    async fn config_adapter_save_hetang_maps_back() {
         let mut mock = MockConfigRepo::new();
         mock.expect_save()
             .withf(|cfg: &AppConfig| cfg.active_tenant == TenantKind::Hetang)
@@ -376,7 +366,7 @@ mod tests {
 
         let adapter = CoreConfigStoreAdapter::new(Arc::new(mock));
         let dto = rca_core::app::AppConfigDto {
-            tenant: "UnknownTenant".to_string(),
+            tenant: rca_core::app::TenantKind::Hetang,
             ..Default::default()
         };
         adapter.save_config(&dto).await.unwrap();

@@ -2,8 +2,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
+use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
+use crate::app::notify_event_keys;
 use crate::app::ports::{
     ApiPort, ConfigStorePort, NotifierPort, SessionStorePort, UpdateCheckerPort,
 };
@@ -15,6 +18,20 @@ use crate::auth::{AuthState, QrLoginProgress};
 use crate::monitor::CoreEvent;
 
 const MAX_RECENT_EVENTS: usize = 200;
+
+struct CoreBackgroundTasks {
+    shutdown: Option<oneshot::Sender<()>>,
+    join: JoinHandle<()>,
+}
+
+impl Drop for CoreBackgroundTasks {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        self.join.abort();
+    }
+}
 
 #[derive(Clone)]
 pub struct CoreAppDeps {
@@ -32,15 +49,14 @@ struct InnerState {
     subscribers: Vec<mpsc::Sender<AppEvent>>,
 }
 
-pub struct CoreAppService {
+pub struct AppServiceImpl {
     deps: CoreAppDeps,
     inner: Arc<Mutex<InnerState>>,
+    background: Mutex<Option<CoreBackgroundTasks>>,
 }
 
-impl CoreAppService {
+impl AppServiceImpl {
     pub fn new(deps: CoreAppDeps, initial_config: AppConfigDto) -> Self {
-        let mut rx = deps.monitor_engine.subscribe_events();
-
         let inner = Arc::new(Mutex::new(InnerState {
             app_state: AppState {
                 auth_state: AuthState::LoggedOut,
@@ -52,100 +68,128 @@ impl CoreAppService {
             config: initial_config,
             subscribers: Vec::new(),
         }));
+        Self {
+            deps,
+            inner,
+            background: Mutex::new(None),
+        }
+    }
 
-        let notifier = deps.notifier.clone();
-        let inner_clone = inner.clone();
-        tokio::spawn(async move {
-            while let Ok(event) = rx.recv().await {
-                {
-                    let mut guard = inner_clone.lock().expect("core app state poisoned");
-                    Self::append_recent_event(&mut guard, event.clone());
-                    if let CoreEvent::MonitorStopped { .. } = event {
-                        guard.app_state.monitor_running = false;
-                    }
+    pub fn new_started(deps: CoreAppDeps, initial_config: AppConfigDto) -> Self {
+        let service = Self::new(deps, initial_config);
+        service.start_background_tasks();
+        service
+    }
 
-                    if let CoreEvent::PresentationUpdated {
-                        lesson_id,
-                        presentation_id,
-                    } = &event
-                    {
-                        let inner_event_clone = inner_clone.clone();
-                        let lid = *lesson_id;
-                        let pid = *presentation_id;
-                        tokio::spawn(async move {
-                            Self::emit_event_with_inner(
-                                &inner_event_clone,
-                                AppEvent::PresentationDiscovered {
-                                    lesson_id: lid,
-                                    presentation_id: pid,
-                                },
-                            )
-                            .await;
-                        });
-                    }
+    pub fn start_background_tasks(&self) {
+        let mut bg = self
+            .background
+            .lock()
+            .expect("core app background poisoned");
+        if bg.is_some() {
+            return;
+        }
 
-                    if guard.config.notify_enabled {
-                        let maybe_notify = match &event {
-                            CoreEvent::AutoAnswerSubmitted {
-                                lesson_id,
-                                problem_id,
-                            } => Some((
-                                "auto_answer_submitted",
-                                AppNotification {
-                                    title: "自动答题".to_string(),
-                                    body: format!(
-                                        "已成功提交自动答题！(课程 {}, 题目 {})",
-                                        lesson_id.0.get(),
-                                        problem_id.0.get()
-                                    ),
-                                },
-                            )),
-                            CoreEvent::AutoCheckinSubmitted {
-                                lesson_id,
-                                checkin_id,
-                            } => Some((
-                                "auto_checkin_submitted",
-                                AppNotification {
-                                    title: "自动签到".to_string(),
-                                    body: format!(
-                                        "已成功自动签到！(课程 {}, 签到 {})",
-                                        lesson_id.0.get(),
-                                        checkin_id.0.get()
-                                    ),
-                                },
-                            )),
-                            CoreEvent::CallPaused {
-                                lesson_id,
-                                target_name,
-                            } => Some((
-                                "call_paused",
-                                AppNotification {
-                                    title: "老师正在点名".to_string(),
-                                    body: format!(
-                                        "老师正在点名：{}！(课程 {})",
-                                        target_name,
-                                        lesson_id.0.get()
-                                    ),
-                                },
-                            )),
-                            _ => None,
-                        };
+        let mut rx = self.deps.monitor_engine.subscribe_events();
+        let notifier = self.deps.notifier.clone();
+        let inner_clone = self.inner.clone();
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
-                        if let Some((event_key, msg)) = maybe_notify
-                            && Self::notify_event_enabled(&guard.config, event_key)
+        let join = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    result = rx.recv() => {
+                        let Ok(event) = result else { break; };
                         {
-                            let notifier_clone = notifier.clone();
-                            tokio::spawn(async move {
-                                let _ = notifier_clone.notify(msg).await;
-                            });
+                            let mut guard = inner_clone.lock().expect("core app state poisoned");
+                            Self::append_recent_event(&mut guard, event.clone());
+                            if let CoreEvent::MonitorStopped { .. } = event {
+                                guard.app_state.monitor_running = false;
+                            }
+
+                            if let CoreEvent::PresentationUpdated { lesson_id, presentation_id } = &event {
+                                let inner_event_clone = inner_clone.clone();
+                                let lid = *lesson_id;
+                                let pid = *presentation_id;
+                                tokio::spawn(async move {
+                                    Self::emit_event_with_inner(
+                                        &inner_event_clone,
+                                        AppEvent::PresentationDiscovered {
+                                            lesson_id: lid,
+                                            presentation_id: pid,
+                                        },
+                                    )
+                                    .await;
+                                });
+                            }
+
+                            if guard.config.notify_enabled {
+                                let maybe_notify = match &event {
+                                    CoreEvent::AutoAnswerSubmitted { lesson_id, problem_id } => Some((
+                                        notify_event_keys::AUTO_ANSWER_SUBMITTED,
+                                        AppNotification {
+                                            title: "自动答题".to_string(),
+                                            body: format!(
+                                                "已成功提交自动答题！(课程 {}, 题目 {})",
+                                                lesson_id.0.get(),
+                                                problem_id.0.get()
+                                            ),
+                                        },
+                                    )),
+                                    CoreEvent::AutoCheckinSubmitted { lesson_id, checkin_id } => Some((
+                                        notify_event_keys::AUTO_CHECKIN_SUBMITTED,
+                                        AppNotification {
+                                            title: "自动签到".to_string(),
+                                            body: format!(
+                                                "已成功自动签到！(课程 {}, 签到 {})",
+                                                lesson_id.0.get(),
+                                                checkin_id.0.get()
+                                            ),
+                                        },
+                                    )),
+                                    CoreEvent::CallPaused { lesson_id, target_name } => Some((
+                                        notify_event_keys::CALL_PAUSED,
+                                        AppNotification {
+                                            title: "老师正在点名".to_string(),
+                                            body: format!(
+                                                "老师正在点名：{}！(课程 {})",
+                                                target_name,
+                                                lesson_id.0.get()
+                                            ),
+                                        },
+                                    )),
+                                    _ => None,
+                                };
+
+                                if let Some((event_key, msg)) = maybe_notify
+                                    && Self::notify_event_enabled(&guard.config, event_key)
+                                {
+                                    let notifier_clone = notifier.clone();
+                                    tokio::spawn(async move {
+                                        let _ = notifier_clone.notify(msg).await;
+                                    });
+                                }
+                            }
                         }
+                        Self::emit_state_changed_with_inner(&inner_clone).await;
                     }
                 }
-                Self::emit_state_changed_with_inner(&inner_clone).await;
             }
         });
 
-        Self { deps, inner }
+        *bg = Some(CoreBackgroundTasks {
+            shutdown: Some(shutdown_tx),
+            join,
+        });
+    }
+
+    pub fn stop_background_tasks(&self) {
+        let mut bg = self
+            .background
+            .lock()
+            .expect("core app background poisoned");
+        let _ = bg.take();
     }
 
     async fn emit_event(&self, event: AppEvent) {
@@ -234,7 +278,9 @@ impl CoreAppService {
                 let inner = self.inner.lock().expect("core app state poisoned");
                 inner.config.clone()
             };
-            if config.notify_enabled && Self::notify_event_enabled(&config, "login_success") {
+            if config.notify_enabled
+                && Self::notify_event_enabled(&config, notify_event_keys::LOGIN_SUCCESS)
+            {
                 self.deps
                     .notifier
                     .notify(message.clone())
@@ -299,7 +345,7 @@ impl CoreAppService {
 }
 
 #[async_trait]
-impl AppService for CoreAppService {
+impl AppService for AppServiceImpl {
     async fn handle_command(&self, cmd: AppCommand) -> Result<(), AppError> {
         match cmd {
             AppCommand::LoadConfig => {
@@ -409,7 +455,7 @@ impl AppService for CoreAppService {
                     .map_err(AppError::from)?;
                 self.apply_qr_login_progress(scene_id, progress).await
             }
-            AppCommand::WaitLogin {
+            AppCommand::AwaitLogin {
                 scene_id,
                 timeout_secs,
             } => {
@@ -573,7 +619,7 @@ mod tests {
     };
 
     use super::{AppEvent, AppService};
-    use super::{CoreAppDeps, CoreAppService};
+    use super::{AppServiceImpl, CoreAppDeps};
 
     #[derive(Clone)]
     struct MockPorts {
@@ -779,7 +825,7 @@ mod tests {
     #[tokio::test]
     async fn login_flow_should_update_state_to_logged_in() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -824,7 +870,7 @@ mod tests {
             expires_at_unix_ms: None,
         });
 
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -871,13 +917,13 @@ mod tests {
             notify_events: Default::default(),
             webhook_url: "http://example.com/webhook".to_string(),
             check_update_on_startup: false,
-            tenant: "Rain".to_string(),
+            tenant: crate::app::TenantKind::Rain,
             auth_state_hint: Some(crate::auth::AuthState::Failed {
                 reason: "loaded".to_string(),
             }),
         };
 
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -922,7 +968,7 @@ mod tests {
             expires_at_unix_ms: None,
         });
 
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -957,7 +1003,7 @@ mod tests {
             expires_at_unix_ms: None,
         });
 
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -985,7 +1031,7 @@ mod tests {
     #[tokio::test]
     async fn start_monitor_should_fail_when_logged_out() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1010,7 +1056,7 @@ mod tests {
             published_at_unix_ms: 0,
         });
 
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1034,7 +1080,7 @@ mod tests {
     #[tokio::test]
     async fn start_and_stop_monitor_should_toggle_running_state() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1123,7 +1169,7 @@ mod tests {
 
         let mut config = default_config();
         config.monitor_interval_secs = 1; // Faster poll for tests
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1176,7 +1222,7 @@ mod tests {
     #[tokio::test]
     async fn save_config_should_persist_and_update_runtime() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1214,7 +1260,7 @@ mod tests {
     #[tokio::test]
     async fn logout_should_clear_session_and_stop_monitor() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1261,7 +1307,7 @@ mod tests {
     #[tokio::test]
     async fn get_recent_events_should_respect_limit() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1288,7 +1334,7 @@ mod tests {
     async fn refresh_session_without_session_should_fail() {
         let ports = Arc::new(MockPorts::new(default_config()));
         // No session set
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1319,14 +1365,14 @@ mod tests {
         assert!(cfg.notify_enabled);
         assert!(cfg.webhook_url.is_empty());
         assert!(cfg.check_update_on_startup);
-        assert_eq!(cfg.tenant, "Hetang");
+        assert_eq!(cfg.tenant, crate::app::TenantKind::Hetang);
         assert!(cfg.auth_state_hint.is_none());
     }
 
     #[tokio::test]
     async fn start_monitor_when_already_running_is_noop() {
         let ports = Arc::new(MockPorts::new(default_config()));
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
@@ -1375,7 +1421,7 @@ mod tests {
         let ports = Arc::new(MockPorts::new(default_config()));
         // update is None by default → no update available
 
-        let app = CoreAppService::new(
+        let app = AppServiceImpl::new_started(
             CoreAppDeps {
                 api: ports.clone(),
                 config_store: ports.clone(),
