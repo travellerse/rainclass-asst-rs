@@ -1,10 +1,13 @@
 mod download;
+pub mod filename;
 mod http;
 mod parse;
 mod pdf;
 mod qr_login;
 mod qr_state;
 mod ws;
+
+pub use filename::sanitize_filename_component;
 
 use std::collections::HashSet;
 use std::num::NonZeroU64;

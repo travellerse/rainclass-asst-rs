@@ -56,6 +56,9 @@ pub enum ApiPortError {
         detail: String,
     },
 
+    #[error("api request timed out: {0}")]
+    Timeout(String),
+
     #[error("api protocol changed: {0}")]
     ProtocolChanged(String),
 
@@ -69,6 +72,10 @@ impl ApiPortError {
             context,
             detail: detail.to_string(),
         }
+    }
+
+    pub fn timeout(detail: impl ToString) -> Self {
+        Self::Timeout(detail.to_string())
     }
 
     pub fn protocol(detail: impl ToString) -> Self {
@@ -218,6 +225,14 @@ mod tests {
                 assert_eq!(detail, "network error");
             }
             _ => panic!("Expected ApiPortError::RequestFailed"),
+        }
+
+        let err = ApiPortError::timeout("connection timeout");
+        match err {
+            ApiPortError::Timeout(detail) => {
+                assert_eq!(detail, "connection timeout");
+            }
+            _ => panic!("Expected ApiPortError::Timeout"),
         }
 
         let err = ApiPortError::protocol("unsupported version");

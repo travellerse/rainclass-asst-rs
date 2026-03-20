@@ -10,6 +10,7 @@ use crate::app::ports::{
     ApiPort, ConfigStorePort, NotifierPort, SessionStorePort, UpdateCheckerPort,
 };
 use crate::app::{AppConfigDto, AppEvent, AppState};
+use crate::monitor::MonitorHandle;
 
 pub(super) const MAX_RECENT_EVENTS: usize = 200;
 
@@ -26,6 +27,7 @@ pub struct CoreAppDeps {
 pub(super) struct InnerState {
     app_state: AppState,
     config: AppConfigDto,
+    monitor_handle: Option<MonitorHandle>,
     subscribers: Vec<mpsc::Sender<AppEvent>>,
 }
 

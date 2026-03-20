@@ -30,6 +30,7 @@ impl AppServiceImpl {
                 last_error: None,
             },
             config: initial_config,
+            monitor_handle: None,
             subscribers: Vec::new(),
         }));
         Self {
@@ -197,15 +198,14 @@ impl AppServiceImpl {
     }
 
     pub(super) async fn stop_monitor_engine(&self) {
-        if let Err(e) = self
-            .deps
-            .monitor_engine
-            .stop(crate::monitor::MonitorHandle {
-                task_id: crate::monitor::MonitorTaskId(1),
-            })
-            .await
-        {
-            tracing::error!("Failed to stop monitor engine: {}", e);
+        let monitor_handle = self.with_inner_mut(|inner| inner.monitor_handle.take());
+
+        if let Some(monitor_handle) = monitor_handle {
+            if let Err(e) = self.deps.monitor_engine.stop(monitor_handle).await {
+                tracing::error!(error = ?e, "failed to stop monitor engine");
+            }
+        } else {
+            tracing::debug!("no monitor handle stored; skipping stop");
         }
     }
 
@@ -231,10 +231,20 @@ impl AppServiceImpl {
             ),
         };
 
-        if let Err(e) = self.deps.monitor_engine.start(session, monitor_cfg).await {
-            tracing::error!("Failed to start monitor engine: {}", e);
-            self.set_last_error(e.to_string());
-            self.set_monitor_running(false);
+        match self.deps.monitor_engine.start(session, monitor_cfg).await {
+            Ok(monitor_handle) => {
+                self.with_inner_mut(|inner| {
+                    inner.monitor_handle = Some(monitor_handle);
+                });
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, "failed to start monitor engine");
+                self.with_inner_mut(|inner| {
+                    inner.monitor_handle = None;
+                });
+                self.set_last_error(e.to_string());
+                self.set_monitor_running(false);
+            }
         }
     }
 

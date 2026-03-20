@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use tokio::sync::mpsc;
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::time::{Duration, sleep};
 
 use crate::app::ports::{
@@ -15,6 +16,9 @@ use crate::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
 use crate::domain::{
     AnswerPayload, CheckinId, CourseId, Lesson, LessonId, LessonStatus, Problem, ProblemId,
     ProblemOption, ProblemType,
+};
+use crate::monitor::{
+    CoreEvent, MonitorConfig, MonitorEngine, MonitorError, MonitorHandle, MonitorTaskId,
 };
 
 use super::{AppServiceImpl, CoreAppDeps};
@@ -41,6 +45,50 @@ impl MockPorts {
             notifications: Arc::new(Mutex::new(Vec::new())),
             update: Arc::new(Mutex::new(None)),
         }
+    }
+}
+
+#[derive(Clone)]
+struct RecordingMonitorEngine {
+    start_task_id: u64,
+    stopped_task_ids: Arc<AsyncMutex<Vec<u64>>>,
+    event_tx: broadcast::Sender<CoreEvent>,
+}
+
+impl RecordingMonitorEngine {
+    fn new(start_task_id: u64) -> Self {
+        let (event_tx, _) = broadcast::channel(16);
+        Self {
+            start_task_id,
+            stopped_task_ids: Arc::new(AsyncMutex::new(Vec::new())),
+            event_tx,
+        }
+    }
+
+    async fn stopped_task_ids(&self) -> Vec<u64> {
+        self.stopped_task_ids.lock().await.clone()
+    }
+}
+
+#[async_trait]
+impl MonitorEngine for RecordingMonitorEngine {
+    async fn start(
+        &self,
+        _session: AuthSession,
+        _cfg: MonitorConfig,
+    ) -> Result<MonitorHandle, MonitorError> {
+        Ok(MonitorHandle {
+            task_id: MonitorTaskId(self.start_task_id),
+        })
+    }
+
+    async fn stop(&self, handle: MonitorHandle) -> Result<(), MonitorError> {
+        self.stopped_task_ids.lock().await.push(handle.task_id.0);
+        Ok(())
+    }
+
+    fn subscribe_events(&self) -> broadcast::Receiver<CoreEvent> {
+        self.event_tx.subscribe()
     }
 }
 
@@ -563,9 +611,6 @@ async fn monitor_should_emit_auto_answer_event_when_problem_available() {
             published_at: Utc::now(),
             deadline_at: None,
         });
-
-    let mut config = default_config();
-    config.monitor_interval_secs = 1;
     let app = AppServiceImpl::new_started(
         CoreAppDeps {
             api: ports.clone(),
@@ -602,6 +647,130 @@ async fn monitor_should_emit_auto_answer_event_when_problem_available() {
     };
 
     assert!(events.iter().any(|event| {
+        matches!(
+            event,
+            crate::monitor::CoreEvent::AutoAnswerSubmitted {
+                lesson_id,
+                problem_id,
+            } if lesson_id.0.get() == 1001 && problem_id.0.get() == 3001
+        )
+    }));
+
+    app.handle_command(AppCommand::StopMonitor)
+        .await
+        .expect("stop monitor failed");
+}
+
+#[tokio::test]
+async fn stop_monitor_should_use_handle_returned_by_start() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let monitor_engine = Arc::new(RecordingMonitorEngine::new(77));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: monitor_engine.clone(),
+        },
+        default_config(),
+    );
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+    app.handle_command(AppCommand::PollLogin {
+        scene_id: "scene-1".to_string(),
+    })
+    .await
+    .expect("poll login failed");
+
+    app.handle_command(AppCommand::StartMonitor)
+        .await
+        .expect("start monitor failed");
+    app.handle_command(AppCommand::StopMonitor)
+        .await
+        .expect("stop monitor failed");
+
+    assert_eq!(monitor_engine.stopped_task_ids().await, vec![77]);
+}
+
+#[tokio::test]
+async fn monitor_should_not_emit_auto_answer_event_when_disabled() {
+    let mut config = default_config();
+    config.auto_answer_enabled = false;
+    config.monitor_interval_secs = 1;
+    let ports = Arc::new(MockPorts::new(config.clone()));
+    ports
+        .lessons
+        .lock()
+        .expect("lessons poisoned")
+        .push(Lesson {
+            lesson_id: LessonId(NonZeroU64::new(1001).expect("non-zero")),
+            course_id: CourseId(NonZeroU64::new(2001).expect("non-zero")),
+            course_name: "测试课程".to_string(),
+            teacher_name: "测试老师".to_string(),
+            started_at: None,
+            ended_at: None,
+            status: LessonStatus::Running,
+        });
+    ports
+        .problems
+        .lock()
+        .expect("problems poisoned")
+        .push(Problem {
+            lesson_id: LessonId(NonZeroU64::new(1001).expect("non-zero")),
+            problem_id: ProblemId(NonZeroU64::new(3001).expect("non-zero")),
+            problem_type: ProblemType::SingleChoice,
+            title: "测试题目".to_string(),
+            options: vec![ProblemOption {
+                option_id: "A".to_string(),
+                text: "选项A".to_string(),
+            }],
+            correct_answers: vec!["A".to_string()],
+            blanks: Vec::new(),
+            limit_secs: Some(10),
+            published_at: Utc::now(),
+            deadline_at: None,
+        });
+
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        config,
+    );
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+    app.handle_command(AppCommand::PollLogin {
+        scene_id: "scene-1".to_string(),
+    })
+    .await
+    .expect("poll login failed");
+
+    app.handle_command(AppCommand::StartMonitor)
+        .await
+        .expect("start monitor failed");
+
+    sleep(Duration::from_millis(1500)).await;
+
+    let events = app
+        .handle_query(AppQuery::GetRecentEvents { limit: 20 })
+        .await
+        .expect("query events failed");
+    let AppQueryResult::Events(events) = events else {
+        panic!("expected events query result");
+    };
+
+    assert!(!events.iter().any(|event| {
         matches!(
             event,
             crate::monitor::CoreEvent::AutoAnswerSubmitted {

@@ -67,6 +67,8 @@ impl QrStateStore {
     ) -> Result<QrLoginProgress, ApiPortError> {
         let timeout_secs = timeout_secs.max(1);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+        let timeout_error =
+            || ApiPortError::timeout(format!("qr login wait timed out after {timeout_secs}s"));
 
         loop {
             let maybe_progress = {
@@ -100,7 +102,7 @@ impl QrStateStore {
 
             let now = tokio::time::Instant::now();
             if now >= deadline {
-                return Ok(QrLoginProgress::Pending);
+                return Err(timeout_error());
             }
 
             let wait_for = deadline.saturating_duration_since(now);
@@ -108,7 +110,7 @@ impl QrStateStore {
                 .await
                 .is_err()
             {
-                return Ok(QrLoginProgress::Pending);
+                return Err(timeout_error());
             }
         }
     }

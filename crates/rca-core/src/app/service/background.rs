@@ -97,6 +97,7 @@ pub(super) fn start_background_tasks(service: &AppServiceImpl) {
                         AppServiceImpl::append_recent_event(&mut guard, event.clone());
                         if let CoreEvent::MonitorStopped { .. } = event {
                             guard.app_state.monitor_running = false;
+                            guard.monitor_handle = None;
                         }
 
                         if let CoreEvent::PresentationUpdated { lesson_id, presentation_id } = &event {

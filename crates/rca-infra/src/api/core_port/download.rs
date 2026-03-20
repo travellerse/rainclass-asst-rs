@@ -3,31 +3,13 @@ use std::path::{Path, PathBuf};
 use bytes::Bytes;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
 use serde_json::{Value, json};
+use tokio::io::AsyncWriteExt;
 
 use rca_core::app::ports::ApiPortError;
 use rca_core::auth::AuthSession;
 
 use super::YktApiPort;
-
-fn sanitize_filename_component(input: &str) -> String {
-    let replaced = input
-        .replace(['\u{0000}', '/', '\\'], "_")
-        .replace([':', '*', '?', '"', '<', '>', '|'], "_")
-        .trim()
-        .replace(' ', "_");
-
-    let no_dot_segments = replaced
-        .split('.')
-        .filter(|seg| !seg.is_empty())
-        .collect::<Vec<_>>()
-        .join(".");
-
-    if no_dot_segments.is_empty() {
-        "Presentation".to_string()
-    } else {
-        no_dot_segments
-    }
-}
+use super::sanitize_filename_component;
 
 fn build_safe_output_path(save_dir: &Path, file_name: &str) -> Result<PathBuf, std::io::Error> {
     let candidate = Path::new(file_name);
@@ -269,19 +251,20 @@ pub(super) async fn download_presentation(
     let pdf_bytes =
         YktApiPort::build_presentation_pdf_bytes(width as f32, height as f32, image_bytes_results)?;
 
-    use std::fs::File;
-    use std::io::Write;
     let tmp_path = save_path.with_extension("pdf.tmp");
-    let write_result: Result<(), ApiPortError> = (|| {
-        let mut file = std::io::BufWriter::new(
-            File::create(&tmp_path).map_err(|e| ApiPortError::request("open pdf tmp file", e))?,
-        );
+    let write_result: Result<(), ApiPortError> = async {
+        let mut file = tokio::fs::File::create(&tmp_path)
+            .await
+            .map_err(|e| ApiPortError::request("open pdf tmp file", e))?;
         file.write_all(&pdf_bytes)
+            .await
             .map_err(|e| ApiPortError::request("write pdf tmp", e))?;
         file.flush()
+            .await
             .map_err(|e| ApiPortError::request("flush pdf tmp", e))?;
         Ok(())
-    })();
+    }
+    .await;
 
     if let Err(e) = write_result {
         let _ = tokio::fs::remove_file(&tmp_path).await;
