@@ -4807,6 +4807,7 @@ dependencies = [
  "rca-core",
  "rca-infra",
  "thiserror 2.0.18",
+ "tracing",
  "tracing-appender",
 ]
 

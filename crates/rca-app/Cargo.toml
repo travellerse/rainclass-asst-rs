@@ -8,3 +8,4 @@ rca-core = { version = "0.1.0", path = "../rca-core" }
 rca-infra = { version = "0.1.0", path = "../rca-infra" }
 thiserror.workspace = true
 tracing-appender = "0.2.4"
+tracing.workspace = true

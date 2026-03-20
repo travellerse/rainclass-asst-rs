@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use rca_core::app::{AppCommand, AppConfigDto, AppService, AppServiceImpl, CoreAppDeps};
 use rca_infra::storage::ConfigRepository;
+use tracing::warn;
 
 #[derive(Debug, Clone, Copy)]
 pub enum NotifierMode {
@@ -135,14 +136,20 @@ async fn run_startup_actions(
     app: Arc<AppServiceImpl>,
     startup: StartupActions,
 ) -> Result<(), BootstrapError> {
-    if startup.load_config {
-        let _ = app.handle_command(AppCommand::LoadConfig).await;
+    if startup.load_config
+        && let Err(err) = app.handle_command(AppCommand::LoadConfig).await
+    {
+        warn!(error = ?err, "failed to execute startup action: LoadConfig");
     }
-    if startup.restore_session {
-        let _ = app.handle_command(AppCommand::RestoreSession).await;
+    if startup.restore_session
+        && let Err(err) = app.handle_command(AppCommand::RestoreSession).await
+    {
+        warn!(error = ?err, "failed to execute startup action: RestoreSession");
     }
-    if startup.refresh_session {
-        let _ = app.handle_command(AppCommand::RefreshSession).await;
+    if startup.refresh_session
+        && let Err(err) = app.handle_command(AppCommand::RefreshSession).await
+    {
+        warn!(error = ?err, "failed to execute startup action: RefreshSession");
     }
     Ok(())
 }
