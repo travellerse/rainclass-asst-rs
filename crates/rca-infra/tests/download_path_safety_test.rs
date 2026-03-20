@@ -1,29 +1,8 @@
 use std::path::Path;
 
+use rca_infra::api::core_port::sanitize_filename_component;
+
 // We keep these tests simple and local to `rca-infra`.
-// The implementation lives in `YktApiPort` but we test the behavior via
-// small helper wrappers here to avoid coupling tests to HTTP/network.
-
-fn sanitize_filename_component(input: &str) -> String {
-    // Mirror the production behavior (keep in sync with core_port.rs).
-    let replaced = input
-        .replace(['\u{0000}', '/', '\\'], "_")
-        .replace([':', '*', '?', '"', '<', '>', '|'], "_")
-        .trim()
-        .replace(' ', "_");
-
-    let no_dot_segments = replaced
-        .split('.')
-        .filter(|seg| !seg.is_empty())
-        .collect::<Vec<_>>()
-        .join(".");
-
-    if no_dot_segments.is_empty() {
-        "Presentation".to_string()
-    } else {
-        no_dot_segments
-    }
-}
 
 fn is_single_component(file_name: &str) -> bool {
     let p = Path::new(file_name);
