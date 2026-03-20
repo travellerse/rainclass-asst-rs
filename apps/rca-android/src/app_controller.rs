@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -35,56 +36,36 @@ impl TaskGroup {
     }
 }
 
-/// High-level controller that encapsulates the core application service and
-/// Tokio runtime.  UI callbacks interact with this object instead of talking
-/// directly to the core `AppService` implementation.
 #[derive(Clone)]
-pub struct DesktopController {
+pub struct AndroidController {
     pub app: Arc<AppServiceImpl>,
     pub runtime: Arc<tokio::runtime::Runtime>,
     tasks: Arc<TaskGroup>,
 }
 
-impl DesktopController {
-    /// Application default configuration used when no existing config is found.
-    ///
-    /// Copied from the original `main.rs` helper.
+impl AndroidController {
     pub fn default_config() -> AppConfigDto {
         AppConfigDto::default()
     }
 
-    /// Bootstraps the dependencies and returns a ready-to-use controller.
-    pub fn bootstrap() -> Result<Self, Box<dyn Error>> {
+    pub fn bootstrap(storage_root: Option<PathBuf>) -> Result<Self, Box<dyn Error>> {
         let runtime = Arc::new(tokio::runtime::Runtime::new()?);
         let app = runtime.block_on(rca_app::bootstrap_core_app(BootstrapOptions {
             default_config: Self::default_config(),
-            notifier_mode: NotifierMode::Desktop,
-            startup: StartupActions::desktop_default(),
-            storage_root: None,
+            notifier_mode: NotifierMode::Android,
+            startup: StartupActions::mobile_default(),
+            storage_root,
         }))?;
 
-        Ok(DesktopController {
+        Ok(Self {
             app,
             runtime,
             tasks: Arc::new(TaskGroup::default()),
         })
     }
 
-    /// Query current application state.
     pub async fn get_state(&self) -> Result<AppQueryResult, rca_core::app::AppError> {
         self.app.handle_query(AppQuery::GetAppState).await
-    }
-
-    pub async fn get_config(&self) -> Result<AppQueryResult, rca_core::app::AppError> {
-        self.app.handle_query(AppQuery::GetConfig).await
-    }
-
-    pub async fn login_by_qr(&self) -> Result<(), rca_core::app::AppError> {
-        self.app.handle_command(AppCommand::LoginByQr).await
-    }
-
-    pub async fn check_update(&self) -> Result<(), rca_core::app::AppError> {
-        self.app.handle_command(AppCommand::CheckUpdate).await
     }
 
     pub fn spawn_task<F>(&self, fut: F)

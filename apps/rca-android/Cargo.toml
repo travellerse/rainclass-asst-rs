@@ -1,0 +1,18 @@
+[package]
+name = "rca-android"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rca-app = { version = "0.1.0", path = "../../crates/rca-app" }
+rca-core = { version = "0.1.0", path = "../../crates/rca-core" }
+slint = { workspace = true, features = ["backend-android-activity-06"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tracing.workspace = true
+rust-i18n.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

@@ -1,11 +1,10 @@
+#[cfg(not(target_os = "android"))]
 use std::path::PathBuf;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{
-    Layer, Registry,
-    filter::{EnvFilter, LevelFilter},
-    fmt,
-    layer::SubscriberExt,
-};
+use tracing_subscriber::{Layer, Registry, filter::EnvFilter, fmt, layer::SubscriberExt};
+
+#[cfg(not(target_os = "android"))]
+use tracing_subscriber::filter::LevelFilter;
 
 fn default_env_filter_directives(default_level: &str) -> String {
     format!(
@@ -19,44 +18,77 @@ fn build_env_filter_for_console(default_level: &str) -> EnvFilter {
         .unwrap_or_else(|_| EnvFilter::new(default_env_filter_directives(default_level)))
 }
 
+#[cfg(not(target_os = "android"))]
 fn build_env_filter_for_app(default_level: &str) -> EnvFilter {
     // Keep console + app consistent unless the user provides RUST_LOG.
     EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(default_env_filter_directives(default_level)))
 }
 
+#[cfg(target_os = "android")]
+fn init_android_logger(default_level: &str) -> Vec<WorkerGuard> {
+    let env_filter = build_env_filter_for_console(default_level);
+
+    let console_layer = fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_line_number(false)
+        .with_filter(env_filter);
+
+    let subscriber = Registry::default().with(console_layer);
+    tracing::subscriber::set_global_default(subscriber).expect("Failed to set tracing subscriber");
+
+    Vec::new()
+}
+
+#[cfg(not(target_os = "android"))]
 fn is_warn_level(level: tracing::Level) -> bool {
     level == tracing::Level::WARN
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_info_level(level: tracing::Level) -> bool {
     level == tracing::Level::INFO
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_debug_level(level: tracing::Level) -> bool {
     level == tracing::Level::DEBUG
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_trace_level(level: tracing::Level) -> bool {
     level == tracing::Level::TRACE
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_warn(metadata: &tracing::Metadata<'_>) -> bool {
     is_warn_level(*metadata.level())
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_info(metadata: &tracing::Metadata<'_>) -> bool {
     is_info_level(*metadata.level())
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_debug(metadata: &tracing::Metadata<'_>) -> bool {
     is_debug_level(*metadata.level())
 }
 
+#[cfg(not(target_os = "android"))]
 fn is_trace(metadata: &tracing::Metadata<'_>) -> bool {
     is_trace_level(*metadata.level())
 }
 
+#[cfg(target_os = "android")]
+pub fn init_logger(_log_dir: std::path::PathBuf, default_level: &str) -> Vec<WorkerGuard> {
+    init_android_logger(default_level)
+}
+
+#[cfg(not(target_os = "android"))]
 pub fn init_logger(log_dir: PathBuf, default_level: &str) -> Vec<WorkerGuard> {
     let mut guards = Vec::new();
     std::fs::create_dir_all(&log_dir).unwrap_or_default();

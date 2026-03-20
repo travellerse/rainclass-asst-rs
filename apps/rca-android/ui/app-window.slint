@@ -1,0 +1,183 @@
+import { Button } from "std-widgets.slint";
+
+export component AppWindow inherits Window {
+    title: "RainClassroom Assistant";
+    width: 420px;
+    height: 780px;
+    background: #0f172a;
+
+    in-out property <string> auth-status-text: "未登录";
+    in-out property <string> auth-status-kind: "offline";
+    in-out property <string> monitor-status-text: "未启动";
+    in-out property <bool> monitor-running: false;
+    in-out property <string> last-error-text: "";
+    in-out property <string> app-version-text: "v0.1.0";
+    in-out property <int> lesson-count: 0;
+    in-out property <int> recent-event-count: 0;
+
+    callback login-clicked();
+    callback logout-clicked();
+    callback start-monitor-clicked();
+    callback stop-monitor-clicked();
+    callback check-update-clicked();
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 16px;
+
+        Rectangle {
+            height: 140px;
+            background: #111827;
+            border-radius: 20px;
+
+            VerticalLayout {
+                padding: 18px;
+                spacing: 6px;
+
+                Text {
+                    text: "RainClassroom Assistant";
+                    color: #f8fafc;
+                    font-size: 24px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: root.app-version-text;
+                    color: #94a3b8;
+                    font-size: 14px;
+                }
+
+                Text {
+                    text: root.auth-status-text;
+                    color: root.auth-status-kind == "online" ? #22c55e : root.auth-status-kind == "waiting" ? #f59e0b : root.auth-status-kind == "error" ? #ef4444 : #94a3b8;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+
+                Text {
+                    text: root.monitor-status-text;
+                    color: #cbd5e1;
+                    font-size: 13px;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 112px;
+            background: #1e293b;
+            border-radius: 18px;
+
+            HorizontalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                Rectangle {
+                    width: 0px;
+                    horizontal-stretch: 1;
+                    background: transparent;
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "课程";
+                            color: #94a3b8;
+                            font-size: 12px;
+                        }
+
+                        Text {
+                            text: root.lesson-count + "";
+                            color: #f8fafc;
+                            font-size: 28px;
+                            font-weight: 700;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: 0px;
+                    horizontal-stretch: 1;
+                    background: transparent;
+
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text {
+                            text: "事件";
+                            color: #94a3b8;
+                            font-size: 12px;
+                        }
+
+                        Text {
+                            text: root.recent-event-count + "";
+                            color: #f8fafc;
+                            font-size: 28px;
+                            font-weight: 700;
+                        }
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 10px;
+
+            Button {
+                text: "登录";
+                clicked => {
+                    root.login-clicked();
+                }
+            }
+
+            Button {
+                text: "退出登录";
+                clicked => {
+                    root.logout-clicked();
+                }
+            }
+
+            Button {
+                text: "启动监控";
+                clicked => {
+                    root.start-monitor-clicked();
+                }
+            }
+
+            Button {
+                text: "停止监控";
+                clicked => {
+                    root.stop-monitor-clicked();
+                }
+            }
+
+            Button {
+                text: "检查更新";
+                clicked => {
+                    root.check-update-clicked();
+                }
+            }
+        }
+
+        Rectangle {
+            height: 120px;
+            background: #0b1220;
+            border-radius: 18px;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 8px;
+
+                Text {
+                    text: "最近错误";
+                    color: #94a3b8;
+                    font-size: 12px;
+                }
+
+                Text {
+                    text: root.last-error-text == "" ? "暂无" : root.last-error-text;
+                    color: #e2e8f0;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+    }
+}

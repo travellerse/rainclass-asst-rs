@@ -14,7 +14,16 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
-    pub fn detect() -> Result<Self, StorageError> {
+    pub fn detect(storage_root: Option<&Path>) -> Result<Self, StorageError> {
+        if let Some(storage_root) = storage_root {
+            let root = storage_root.to_path_buf();
+            return Ok(Self {
+                config_file: root.join("config.json"),
+                session_file: root.join("session.json"),
+                log_dir: root.join("logs"),
+            });
+        }
+
         let project_dirs = ProjectDirs::from("io", "travellerse", "RainClassroomAssistant")
             .ok_or_else(|| {
                 StorageError::InvalidConfig("cannot resolve project directories".to_string())

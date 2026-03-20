@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use rca_core::app::{AppCommand, AppConfigDto, AppService, AppServiceImpl, CoreAppDeps};
@@ -9,6 +10,7 @@ use tracing::warn;
 pub enum NotifierMode {
     Cli,
     Desktop,
+    Android,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +36,14 @@ impl StartupActions {
             refresh_session: true,
         }
     }
+
+    pub fn mobile_default() -> Self {
+        Self {
+            load_config: true,
+            restore_session: true,
+            refresh_session: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +51,7 @@ pub struct BootstrapOptions {
     pub default_config: AppConfigDto,
     pub notifier_mode: NotifierMode,
     pub startup: StartupActions,
+    pub storage_root: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -49,10 +60,18 @@ pub enum BootstrapError {
     Bootstrap(#[from] Box<dyn Error + Send + Sync>),
 }
 
+#[cfg(target_os = "android")]
 pub fn init_default_logger(
     default_level: &str,
 ) -> Vec<tracing_appender::non_blocking::WorkerGuard> {
-    let log_dir = match rca_infra::storage::AppPaths::detect() {
+    rca_infra::log::init_logger(PathBuf::new(), default_level)
+}
+
+#[cfg(not(target_os = "android"))]
+pub fn init_default_logger(
+    default_level: &str,
+) -> Vec<tracing_appender::non_blocking::WorkerGuard> {
+    let log_dir = match rca_infra::storage::AppPaths::detect(None) {
         Ok(paths) => paths.log_dir,
         Err(_) => std::env::current_dir().unwrap_or_default().join("logs"),
     };
@@ -68,7 +87,8 @@ pub async fn bootstrap_core_app(
 }
 
 async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<AppServiceImpl>, BootstrapError> {
-    let paths = rca_infra::storage::AppPaths::detect().map_err(boxed)?;
+    let paths =
+        rca_infra::storage::AppPaths::detect(options.storage_root.as_deref()).map_err(boxed)?;
     let config_repo = Arc::new(rca_infra::storage::JsonFileConfigRepository::new(
         paths.config_file,
     ));
@@ -95,6 +115,7 @@ async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<AppServiceImpl
             ];
             Arc::new(rca_infra::notify::MultiNotifier::new(notifiers))
         }
+        NotifierMode::Android => Arc::new(rca_infra::notify::LoggingNotifier),
     };
 
     let update_checker = Arc::new(

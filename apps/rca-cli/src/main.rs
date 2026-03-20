@@ -207,6 +207,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         default_config: default_config(),
         notifier_mode: rca_app::NotifierMode::Cli,
         startup: rca_app::StartupActions::cli_default(),
+        storage_root: None,
     })
     .await?;
 
