@@ -27,9 +27,6 @@ pub async fn perform_login(runner: CommandRunner, ui_handle: Weak<crate::AppWind
         _ => return,
     };
 
-    // refresh UI while waiting
-    runner.refresh_state(ui_handle.clone());
-
     // Step 3: wait for login result
     let controller = runner.controller();
     let wait = controller.app.handle_command(AppCommand::AwaitLogin {
@@ -45,11 +42,8 @@ pub async fn perform_login(runner: CommandRunner, ui_handle: Weak<crate::AppWind
                 }
                 sleep(Duration::from_millis(300)).await;
             }
-        } => { return; }
+        } => {}
     }
-
-    // final sync
-    runner.refresh_state(ui_handle.clone());
 }
 
 #[cfg(test)]

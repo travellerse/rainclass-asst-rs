@@ -12,6 +12,7 @@ mod command_runner;
 mod config_mapping;
 mod event_subscriber;
 mod login_flow;
+mod ui;
 mod ui_binding;
 mod ui_helpers;
 

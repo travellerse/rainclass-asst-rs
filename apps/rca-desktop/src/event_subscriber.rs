@@ -4,7 +4,7 @@ use slint::Weak;
 use tokio::time::{Duration, Instant, sleep};
 
 use crate::app_controller::DesktopController;
-use crate::command_runner::CommandRunner;
+use crate::ui::UiBindings;
 use rca_core::app::{AppEvent, AppService};
 
 fn should_refresh_ui_on_event() -> bool {
@@ -15,7 +15,23 @@ fn should_refresh_ui_on_event() -> bool {
 /// state sync whenever a new event arrives.
 pub fn start_event_loop(controller: Arc<DesktopController>, ui_handle: Weak<crate::AppWindow>) {
     let mut rx = controller.app.subscribe_events();
-    let runner = CommandRunner::new(controller.clone());
+    let ui = UiBindings::new(ui_handle);
+    let ctrl_for_initial = controller.clone();
+    let ui_for_initial = ui.clone();
+    controller.spawn_task(async move {
+        let state = match ctrl_for_initial.get_state().await {
+            Ok(rca_core::app::AppQueryResult::State(state)) => Ok(state),
+            Ok(_) => Err("状态查询返回类型异常".to_string()),
+            Err(e) => Err(format!("状态查询失败: {e}")),
+        };
+
+        match state {
+            Ok(state) => ui_for_initial.render_state(state),
+            Err(err) => ui_for_initial.show_error(err),
+        }
+    });
+
+    let ctrl = controller.clone();
     controller.spawn_task(async move {
         let mut dirty = false;
         let mut last_change = Instant::now();
@@ -35,7 +51,7 @@ pub fn start_event_loop(controller: Arc<DesktopController>, ui_handle: Weak<crat
                     last_change = Instant::now();
                 }
                 _ = sleep(Duration::from_millis(60)) => {
-                    if ui_handle.upgrade().is_none() {
+                    if ui.weak_handle().upgrade().is_none() {
                         break;
                     }
                     if !dirty || last_change.elapsed() < Duration::from_millis(120) {
@@ -46,9 +62,18 @@ pub fn start_event_loop(controller: Arc<DesktopController>, ui_handle: Weak<crat
                     // 优先使用事件携带的快照，避免每次刷新都向 core 发起查询。
                     // 若期间未收到 StateChanged（例如未来新增事件类型），再回退到查询。
                     if let Some(state) = latest_state.take() {
-                        runner.apply_state(ui_handle.clone(), state);
+                        ui.render_state(state);
                     } else {
-                        runner.refresh_state(ui_handle.clone());
+                        let state = match ctrl.get_state().await {
+                            Ok(rca_core::app::AppQueryResult::State(state)) => Ok(state),
+                            Ok(_) => Err("状态查询返回类型异常".to_string()),
+                            Err(e) => Err(format!("状态查询失败: {e}")),
+                        };
+
+                        match state {
+                            Ok(state) => ui.render_state(state),
+                            Err(err) => ui.show_error(err),
+                        }
                     }
                 }
             }
