@@ -1,7 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
+use rand::RngExt;
 use tokio::sync::{Mutex, watch};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{Duration, sleep};
@@ -39,6 +41,9 @@ struct LessonState {
     checked_checkins: HashSet<u64>,
     danmu_tracker: crate::monitor::DanmuTracker,
     current_presentation_id: Option<u64>,
+    current_slide_index: Option<u64>,
+    last_reported_slide_index: Option<u64>,
+    last_reported_at: Option<Instant>,
 }
 
 impl CoreMonitorEngine {
@@ -111,6 +116,53 @@ impl CoreMonitorEngine {
             }
             ProblemType::Unknown => None,
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn report_page_view_if_due(
+        api: &Arc<dyn ApiPort>,
+        session: &AuthSession,
+        lesson: &crate::domain::Lesson,
+        state: &mut LessonState,
+        slide_index: u64,
+        cfg: &MonitorConfig,
+        force: bool,
+        event_tx: &tokio::sync::broadcast::Sender<CoreEvent>,
+    ) {
+        let now = Instant::now();
+        let same_slide = state.last_reported_slide_index == Some(slide_index);
+        let within_throttle = state
+            .last_reported_at
+            .map(|last| now.duration_since(last) < cfg.page_view_throttle)
+            .unwrap_or(false);
+
+        if !force && same_slide && within_throttle {
+            return;
+        }
+
+        match api.report_page_view(session, lesson, slide_index).await {
+            Ok(()) => {
+                state.last_reported_slide_index = Some(slide_index);
+                state.last_reported_at = Some(now);
+            }
+            Err(err) => {
+                let _ = event_tx.send(CoreEvent::Warning {
+                    code: "PAGE_VIEW_REPORT_FAILED",
+                    message: err.to_string(),
+                });
+            }
+        }
+    }
+
+    fn next_page_view_wait(cfg: &MonitorConfig) -> Duration {
+        let jitter_max_ms = cfg.page_view_jitter_max.as_millis() as u64;
+        if jitter_max_ms == 0 {
+            return cfg.page_view_throttle;
+        }
+
+        let mut rng = rand::rng();
+        let jitter_ms = rng.random_range(0..=jitter_max_ms);
+        cfg.page_view_throttle + Duration::from_millis(jitter_ms)
     }
 
     async fn process_lesson_ws_event(
@@ -244,6 +296,7 @@ impl CoreMonitorEngine {
                 slide_index,
             } => {
                 state.current_presentation_id = Some(presentation_id);
+                state.current_slide_index = Some(slide_index);
                 tracing::info!(
                     lesson_id = lesson.lesson_id.0.get(),
                     presentation_id = presentation_id,
@@ -257,6 +310,17 @@ impl CoreMonitorEngine {
                     slide_id,
                     slide_index,
                 });
+                Self::report_page_view_if_due(
+                    api,
+                    session,
+                    lesson,
+                    state,
+                    slide_index,
+                    cfg,
+                    true,
+                    event.1,
+                )
+                .await;
             }
             LessonWsEvent::ProblemUnlocked { problem_id } => {
                 tracing::info!(
@@ -415,7 +479,11 @@ impl MonitorEngine for CoreMonitorEngine {
                         checked_checkins: HashSet::new(),
                         danmu_tracker: crate::monitor::DanmuTracker::new(),
                         current_presentation_id: None,
+                        current_slide_index: None,
+                        last_reported_slide_index: None,
+                        last_reported_at: None,
                     };
+                    let mut page_view_sleep = Box::pin(sleep(Self::next_page_view_wait(&cfg_for_lesson)));
 
                     loop {
                         if *stop_rx_lesson.borrow() {
@@ -468,6 +536,21 @@ impl MonitorEngine for CoreMonitorEngine {
                                     if *stop_rx_lesson.borrow() {
                                         return;
                                     }
+                                }
+                                _ = &mut page_view_sleep => {
+                                    if let Some(slide_index) = state.current_slide_index {
+                                        Self::report_page_view_if_due(
+                                            &api_for_lesson,
+                                            &session_for_lesson,
+                                            &lesson_clone,
+                                            &mut state,
+                                            slide_index,
+                                            &cfg_for_lesson,
+                                            false,
+                                            &event_tx_lesson,
+                                        ).await;
+                                    }
+                                    page_view_sleep.as_mut().reset(tokio::time::Instant::now() + Self::next_page_view_wait(&cfg_for_lesson));
                                 }
                                 maybe_event = ws_rx.recv() => {
                                     let Some(event) = maybe_event else {
@@ -559,12 +642,173 @@ impl MonitorEngine for CoreMonitorEngine {
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
 
+    use async_trait::async_trait;
     use chrono::Utc;
+    use tokio::sync::mpsc;
 
+    use crate::app::ports::{ApiPort, ApiPortError, LessonWsEvent};
+    use crate::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
     use crate::domain::*;
+    use crate::monitor::MonitorConfig;
 
     use super::CoreMonitorEngine;
+
+    #[derive(Default)]
+    struct RecordingApi {
+        page_views: Mutex<Vec<(u64, u64)>>,
+    }
+
+    #[async_trait]
+    impl ApiPort for RecordingApi {
+        async fn get_on_lessons(
+            &self,
+            _session: &AuthSession,
+        ) -> Result<Vec<Lesson>, ApiPortError> {
+            Ok(vec![])
+        }
+
+        async fn get_lesson_problems(
+            &self,
+            _session: &AuthSession,
+            _lesson_id: LessonId,
+        ) -> Result<Vec<Problem>, ApiPortError> {
+            Ok(vec![])
+        }
+
+        async fn submit_answer(
+            &self,
+            _session: &AuthSession,
+            _lesson_id: LessonId,
+            _problem_id: ProblemId,
+            _payload: AnswerPayload,
+        ) -> Result<(), ApiPortError> {
+            Ok(())
+        }
+
+        async fn submit_checkin(
+            &self,
+            _session: &AuthSession,
+            _lesson_id: LessonId,
+            _checkin_id: CheckinId,
+        ) -> Result<(), ApiPortError> {
+            Ok(())
+        }
+
+        async fn send_danmu(
+            &self,
+            _session: &AuthSession,
+            _lesson_id: LessonId,
+            _content: &str,
+        ) -> Result<(), ApiPortError> {
+            Ok(())
+        }
+
+        async fn report_page_view(
+            &self,
+            _session: &AuthSession,
+            lesson: &Lesson,
+            slide_index: u64,
+        ) -> Result<(), ApiPortError> {
+            self.page_views
+                .lock()
+                .expect("page_views poisoned")
+                .push((lesson.lesson_id.0.get(), slide_index));
+            Ok(())
+        }
+
+        async fn start_qr_login(&self) -> Result<QrLoginBootstrap, ApiPortError> {
+            Err(ApiPortError::protocol("unused in test"))
+        }
+
+        async fn poll_qr_login(&self, _scene_id: &str) -> Result<QrLoginProgress, ApiPortError> {
+            Err(ApiPortError::protocol("unused in test"))
+        }
+
+        async fn wait_qr_login(
+            &self,
+            _scene_id: &str,
+            _timeout_secs: u64,
+        ) -> Result<QrLoginProgress, ApiPortError> {
+            Err(ApiPortError::protocol("unused in test"))
+        }
+
+        async fn refresh_session(&self, _refresh_token: &str) -> Result<AuthSession, ApiPortError> {
+            Err(ApiPortError::protocol("unused in test"))
+        }
+
+        async fn connect_lesson_stream(
+            &self,
+            _session: &AuthSession,
+            _lesson_id: LessonId,
+        ) -> Result<mpsc::Receiver<LessonWsEvent>, ApiPortError> {
+            Err(ApiPortError::protocol("unused in test"))
+        }
+
+        async fn download_presentation(
+            &self,
+            _session: &AuthSession,
+            _presentation_id: u64,
+            _lesson_id: Option<u64>,
+            _save_dir: &std::path::Path,
+        ) -> Result<std::path::PathBuf, ApiPortError> {
+            Err(ApiPortError::protocol("unused in test"))
+        }
+    }
+
+    fn make_session() -> AuthSession {
+        AuthSession {
+            user_id: 42,
+            access_token: "session-token".to_string(),
+            refresh_token: None,
+            expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: Some("orig-42".to_string()),
+        }
+    }
+
+    fn make_lesson() -> Lesson {
+        Lesson {
+            lesson_id: LessonId(NonZeroU64::new(1).unwrap()),
+            course_id: CourseId(NonZeroU64::new(2).unwrap()),
+            course_name: "test course".to_string(),
+            teacher_name: "teacher".to_string(),
+            started_at: None,
+            ended_at: None,
+            status: LessonStatus::Running,
+        }
+    }
+
+    fn make_monitor_config() -> MonitorConfig {
+        MonitorConfig {
+            poll_interval: std::time::Duration::from_secs(5),
+            ws_reconnect_backoff_base: std::time::Duration::from_secs(1),
+            ws_reconnect_backoff_max: std::time::Duration::from_secs(5),
+            max_parallel_lessons: 1,
+            auto_answer_enabled: false,
+            auto_answer_random_guess: false,
+            auto_checkin_enabled: false,
+            auto_danmu_enabled: false,
+            danmu_threshold: 3,
+            delay_strategy: crate::monitor::DelayStrategy::default(),
+            page_view_throttle: std::time::Duration::from_secs(600),
+            page_view_jitter_max: std::time::Duration::from_secs(120),
+        }
+    }
+
+    fn make_lesson_state() -> super::LessonState {
+        super::LessonState {
+            answered_problems: std::collections::HashSet::new(),
+            checked_checkins: std::collections::HashSet::new(),
+            danmu_tracker: crate::monitor::DanmuTracker::new(),
+            current_presentation_id: None,
+            current_slide_index: None,
+            last_reported_slide_index: None,
+            last_reported_at: None,
+        }
+    }
 
     fn make_problem(
         problem_type: ProblemType,
@@ -726,5 +970,150 @@ mod tests {
     fn unknown_type_always_none() {
         let p = make_problem(ProblemType::Unknown, opts(&["A"]), vec!["A".into()], vec![]);
         assert!(CoreMonitorEngine::resolve_answer_payload(&p, true).is_none());
+    }
+
+    #[tokio::test]
+    async fn slide_navigation_reports_page_view_immediately() {
+        let api = Arc::new(RecordingApi::default());
+        let lesson = make_lesson();
+        let session = make_session();
+        let cfg = make_monitor_config();
+        let mut state = make_lesson_state();
+        let (event_tx, _) = tokio::sync::broadcast::channel(8);
+
+        CoreMonitorEngine::process_lesson_ws_event(
+            &(api.clone() as Arc<dyn ApiPort>),
+            &session,
+            &lesson,
+            &mut state,
+            (
+                LessonWsEvent::SlideNavigated {
+                    presentation_id: 10,
+                    slide_id: 20,
+                    slide_index: 3,
+                },
+                &event_tx,
+            ),
+            &cfg,
+            super::ProblemSource::Ws,
+        )
+        .await;
+
+        assert_eq!(state.current_presentation_id, Some(10));
+        assert_eq!(state.current_slide_index, Some(3));
+        assert_eq!(state.last_reported_slide_index, Some(3));
+        assert_eq!(
+            api.page_views
+                .lock()
+                .expect("page_views poisoned")
+                .as_slice(),
+            &[(1, 3)]
+        );
+    }
+
+    #[tokio::test]
+    async fn report_page_view_if_due_throttles_same_slide_until_window_expires() {
+        let api = Arc::new(RecordingApi::default());
+        let lesson = make_lesson();
+        let session = make_session();
+        let cfg = make_monitor_config();
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(8);
+        let mut state = make_lesson_state();
+
+        CoreMonitorEngine::report_page_view_if_due(
+            &(api.clone() as Arc<dyn ApiPort>),
+            &session,
+            &lesson,
+            &mut state,
+            5,
+            &cfg,
+            false,
+            &event_tx,
+        )
+        .await;
+        CoreMonitorEngine::report_page_view_if_due(
+            &(api.clone() as Arc<dyn ApiPort>),
+            &session,
+            &lesson,
+            &mut state,
+            5,
+            &cfg,
+            false,
+            &event_tx,
+        )
+        .await;
+
+        assert_eq!(
+            api.page_views
+                .lock()
+                .expect("page_views poisoned")
+                .as_slice(),
+            &[(1, 5)]
+        );
+        assert!(event_rx.try_recv().is_err());
+
+        state.last_reported_at =
+            Some(Instant::now() - cfg.page_view_throttle - std::time::Duration::from_secs(1));
+        CoreMonitorEngine::report_page_view_if_due(
+            &(api.clone() as Arc<dyn ApiPort>),
+            &session,
+            &lesson,
+            &mut state,
+            5,
+            &cfg,
+            false,
+            &event_tx,
+        )
+        .await;
+
+        assert_eq!(
+            api.page_views
+                .lock()
+                .expect("page_views poisoned")
+                .as_slice(),
+            &[(1, 5), (1, 5)]
+        );
+    }
+
+    #[tokio::test]
+    async fn report_page_view_if_due_allows_immediate_new_slide_even_within_throttle() {
+        let api = Arc::new(RecordingApi::default());
+        let lesson = make_lesson();
+        let session = make_session();
+        let cfg = make_monitor_config();
+        let (event_tx, _) = tokio::sync::broadcast::channel(8);
+        let mut state = make_lesson_state();
+
+        CoreMonitorEngine::report_page_view_if_due(
+            &(api.clone() as Arc<dyn ApiPort>),
+            &session,
+            &lesson,
+            &mut state,
+            1,
+            &cfg,
+            false,
+            &event_tx,
+        )
+        .await;
+        CoreMonitorEngine::report_page_view_if_due(
+            &(api.clone() as Arc<dyn ApiPort>),
+            &session,
+            &lesson,
+            &mut state,
+            2,
+            &cfg,
+            false,
+            &event_tx,
+        )
+        .await;
+
+        assert_eq!(
+            api.page_views
+                .lock()
+                .expect("page_views poisoned")
+                .as_slice(),
+            &[(1, 1), (1, 2)]
+        );
+        assert_eq!(state.last_reported_slide_index, Some(2));
     }
 }
