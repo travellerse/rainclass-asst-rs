@@ -19,4 +19,6 @@ pub struct AuthSession {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_at_unix_ms: Option<i64>,
+    pub csrf_token: Option<String>,
+    pub original_id: Option<String>,
 }

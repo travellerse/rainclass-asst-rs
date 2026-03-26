@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::app::{AppCommand, AppError, AppEvent, AppQuery, AppService};
+use crate::auth::AuthSession;
 use crate::auth::AuthState;
 
 use super::AppServiceImpl;
@@ -65,6 +66,12 @@ impl AppService for AppServiceImpl {
                     .refresh_session(&refresh_token)
                     .await
                     .map_err(AppError::from)?;
+
+                let refreshed = AuthSession {
+                    csrf_token: refreshed.csrf_token.or(session.csrf_token.clone()),
+                    original_id: refreshed.original_id.or(session.original_id.clone()),
+                    ..refreshed
+                };
 
                 self.deps
                     .session_store

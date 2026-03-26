@@ -74,6 +74,8 @@ impl YktApiPort {
             access_token: auth.access_token.clone(),
             refresh_token: auth.refresh_token.clone(),
             expires_at_unix_ms: None,
+            csrf_token: None,
+            original_id: None,
         };
         let headers = self
             .session_headers(&session)

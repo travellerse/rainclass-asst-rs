@@ -164,6 +164,12 @@ pub trait ApiPort: Send + Sync {
         lesson_id: LessonId,
         content: &str,
     ) -> Result<(), ApiPortError>;
+    async fn report_page_view(
+        &self,
+        session: &AuthSession,
+        lesson: &Lesson,
+        slide_index: u64,
+    ) -> Result<(), ApiPortError>;
     async fn start_qr_login(&self) -> Result<QrLoginBootstrap, ApiPortError>;
     async fn poll_qr_login(&self, scene_id: &str) -> Result<QrLoginProgress, ApiPortError>;
     async fn wait_qr_login(

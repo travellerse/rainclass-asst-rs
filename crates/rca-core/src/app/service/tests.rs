@@ -138,6 +138,15 @@ impl ApiPort for MockPorts {
         Ok(())
     }
 
+    async fn report_page_view(
+        &self,
+        _session: &AuthSession,
+        _lesson: &Lesson,
+        _slide_index: u64,
+    ) -> Result<(), ApiPortError> {
+        Ok(())
+    }
+
     async fn start_qr_login(&self) -> Result<QrLoginBootstrap, ApiPortError> {
         Ok(QrLoginBootstrap {
             scene_id: "scene-1".to_string(),
@@ -152,6 +161,8 @@ impl ApiPort for MockPorts {
             access_token: "access-token".to_string(),
             refresh_token: Some("refresh-token".to_string()),
             expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: Some("original-id".to_string()),
         }))
     }
 
@@ -170,6 +181,8 @@ impl ApiPort for MockPorts {
             access_token: refreshed_access,
             refresh_token: Some(refresh_token.to_string()),
             expires_at_unix_ms: None,
+            csrf_token: None,
+            original_id: None,
         })
     }
 
@@ -313,6 +326,8 @@ async fn restore_session_should_recover_logged_in_state() {
         access_token: "restored-access-token".to_string(),
         refresh_token: Some("restored-refresh-token".to_string()),
         expires_at_unix_ms: None,
+        csrf_token: Some("restored-csrf".to_string()),
+        original_id: Some("restored-original".to_string()),
     });
 
     let app = AppServiceImpl::new_started(
@@ -411,6 +426,8 @@ async fn refresh_session_should_update_saved_session_token() {
         access_token: "old-access-token".to_string(),
         refresh_token: Some("refresh-token".to_string()),
         expires_at_unix_ms: None,
+        csrf_token: Some("keep-csrf".to_string()),
+        original_id: Some("keep-original".to_string()),
     });
 
     let app = AppServiceImpl::new_started(
@@ -436,6 +453,8 @@ async fn refresh_session_should_update_saved_session_token() {
         .clone()
         .expect("session missing after refresh");
     assert_eq!(saved.access_token, "refreshed-refresh-token");
+    assert_eq!(saved.csrf_token.as_deref(), Some("keep-csrf"));
+    assert_eq!(saved.original_id.as_deref(), Some("keep-original"));
 }
 
 #[tokio::test]
@@ -446,6 +465,8 @@ async fn refresh_session_should_fallback_to_access_token_when_refresh_missing() 
         access_token: "access-only-token".to_string(),
         refresh_token: None,
         expires_at_unix_ms: None,
+        csrf_token: Some("access-csrf".to_string()),
+        original_id: Some("access-original".to_string()),
     });
 
     let app = AppServiceImpl::new_started(
@@ -471,6 +492,8 @@ async fn refresh_session_should_fallback_to_access_token_when_refresh_missing() 
         .clone()
         .expect("session missing after refresh");
     assert_eq!(saved.access_token, "refreshed-access-only-token");
+    assert_eq!(saved.csrf_token.as_deref(), Some("access-csrf"));
+    assert_eq!(saved.original_id.as_deref(), Some("access-original"));
 }
 
 #[tokio::test]

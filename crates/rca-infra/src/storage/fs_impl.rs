@@ -168,6 +168,8 @@ mod tests {
             access_token: "tok-abc".to_string(),
             refresh_token: Some("ref-xyz".to_string()),
             expires_at_unix_ms: Some(9999999),
+            csrf_token: Some("csrf-123".to_string()),
+            original_id: Some("orig-123".to_string()),
         };
 
         repo.save(&session).await.unwrap();
@@ -177,6 +179,8 @@ mod tests {
         assert_eq!(loaded.access_token, "tok-abc");
         assert_eq!(loaded.refresh_token, Some("ref-xyz".to_string()));
         assert_eq!(loaded.expires_at_unix_ms, Some(9999999));
+        assert_eq!(loaded.csrf_token.as_deref(), Some("csrf-123"));
+        assert_eq!(loaded.original_id.as_deref(), Some("orig-123"));
     }
 
     #[tokio::test]
@@ -190,6 +194,8 @@ mod tests {
             access_token: "tok".to_string(),
             refresh_token: None,
             expires_at_unix_ms: None,
+            csrf_token: None,
+            original_id: None,
         };
         repo.save(&session).await.unwrap();
         assert!(file.exists());

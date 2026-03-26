@@ -162,6 +162,8 @@ pub(super) async fn start_qr_login(
                     access_token: sessionid,
                     refresh_token: None,
                     expires_at_unix_ms: None,
+                    csrf_token: YktApiPort::extract_csrf_token(response.headers()),
+                    original_id: None,
                 };
 
                 qr_state.set(&scene_for_task, qr_state::QrSceneState::Confirmed(session));

@@ -140,6 +140,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
                 access_token: access,
                 refresh_token: refresh,
                 expires_at_unix_ms: record.expires_at_unix_ms,
+                csrf_token: record.csrf_token,
+                original_id: record.original_id,
             }));
         }
 
@@ -159,6 +161,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
                 access_token: record.access_token,
                 refresh_token: record.refresh_token,
                 expires_at_unix_ms: record.expires_at_unix_ms,
+                csrf_token: record.csrf_token,
+                original_id: record.original_id,
             }));
         }
 
@@ -183,6 +187,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
                 access_token: session.access_token.clone(),
                 refresh_token: session.refresh_token.clone(),
                 expires_at_unix_ms: session.expires_at_unix_ms,
+                csrf_token: session.csrf_token.clone(),
+                original_id: session.original_id.clone(),
             })
             .await
             .map_err(StoragePortError::save)
@@ -383,6 +389,8 @@ mod tests {
                 access_token: "__keyring__".to_string(),
                 refresh_token: None,
                 expires_at_unix_ms: Some(99999),
+                csrf_token: Some("csrf-keyring".to_string()),
+                original_id: Some("orig-keyring".to_string()),
             }))
         });
 
@@ -395,6 +403,8 @@ mod tests {
         let session = adapter.load_session().await.unwrap().unwrap();
         assert_eq!(session.access_token, "keyring-access");
         assert_eq!(session.refresh_token, Some("keyring-refresh".to_string()));
+        assert_eq!(session.csrf_token.as_deref(), Some("csrf-keyring"));
+        assert_eq!(session.original_id.as_deref(), Some("orig-keyring"));
     }
 
     #[tokio::test]
@@ -406,6 +416,8 @@ mod tests {
                 access_token: "file-access".to_string(),
                 refresh_token: Some("file-refresh".to_string()),
                 expires_at_unix_ms: None,
+                csrf_token: Some("csrf-file".to_string()),
+                original_id: Some("orig-file".to_string()),
             }))
         });
 
@@ -415,6 +427,8 @@ mod tests {
         let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
         let session = adapter.load_session().await.unwrap().unwrap();
         assert_eq!(session.access_token, "file-access");
+        assert_eq!(session.csrf_token.as_deref(), Some("csrf-file"));
+        assert_eq!(session.original_id.as_deref(), Some("orig-file"));
     }
 
     #[tokio::test]
@@ -438,6 +452,8 @@ mod tests {
                 access_token: "tok".to_string(),
                 refresh_token: None,
                 expires_at_unix_ms: None,
+                csrf_token: Some("csrf".to_string()),
+                original_id: Some("orig".to_string()),
             }))
         });
         session_mock.expect_clear().returning(|| Ok(()));
