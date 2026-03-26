@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Instant;
+use tokio::time::Instant;
 
 use async_trait::async_trait;
-use rand::RngExt;
+use chrono::Utc;
 use tokio::sync::{Mutex, watch};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::{Duration, sleep};
@@ -162,8 +162,14 @@ impl CoreMonitorEngine {
             return cfg.page_view_throttle;
         }
 
-        let mut rng = rand::rng();
-        let jitter_ms = rng.random_range(0..=jitter_max_ms);
+        // Use a timestamp-derived jitter to avoid pulling in RNG compatibility
+        // across different build environments.
+        let ts = Utc::now().timestamp_millis() as u64;
+        let jitter_ms = if jitter_max_ms == 0 {
+            0
+        } else {
+            ts % (jitter_max_ms.saturating_add(1))
+        };
         cfg.page_view_throttle + Duration::from_millis(jitter_ms)
     }
 
@@ -1054,8 +1060,10 @@ mod tests {
         );
         assert!(event_rx.try_recv().is_err());
 
+        // Set last_reported_at to be older than the throttle window (throttle + 1s)
+        let back_ms = cfg.page_view_throttle.as_millis().saturating_add(1000) as u64;
         state.last_reported_at =
-            Some(Instant::now() - cfg.page_view_throttle - std::time::Duration::from_secs(1));
+            Some((Instant::now() - tokio::time::Duration::from_millis(back_ms)).into());
         CoreMonitorEngine::report_page_view_if_due(
             &(api.clone() as Arc<dyn ApiPort>),
             &session,
