@@ -16,7 +16,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::StreamExt;
-use reqwest::header::HeaderMap;
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -72,12 +72,34 @@ impl YktApiPort {
             .build()
             .map_err(ApiError::Http)?;
 
+        Self::from_client_and_host(client, config.tenant.as_host().to_string(), user_agent)
+    }
+
+    fn from_client_and_host(
+        client: reqwest::Client,
+        host: String,
+        user_agent: String,
+    ) -> Result<Self, ApiError> {
         Ok(Self {
             client,
-            host: config.tenant.as_host().to_string(),
+            host,
             user_agent,
             qr_state: qr_state::QrStateStore::new(),
         })
+    }
+
+    #[cfg(test)]
+    fn new_for_test(base_url: &str) -> Result<Self, ApiError> {
+        let user_agent =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0"
+                .to_string();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(ApiError::Http)?;
+
+        Self::from_client_and_host(client, base_url.to_string(), user_agent)
     }
 
     /// Build a PDF (bytes) from slide images.
@@ -117,16 +139,252 @@ impl YktApiPort {
     }
 
     fn extract_session_id(set_cookie_headers: &reqwest::header::HeaderMap) -> Option<String> {
+        Self::extract_cookie_value(set_cookie_headers, "sessionid")
+    }
+
+    fn extract_csrf_token(set_cookie_headers: &reqwest::header::HeaderMap) -> Option<String> {
+        Self::extract_cookie_value(set_cookie_headers, "csrftoken")
+    }
+
+    fn extract_cookie_value(
+        set_cookie_headers: &reqwest::header::HeaderMap,
+        cookie_name: &str,
+    ) -> Option<String> {
         for header in set_cookie_headers.get_all("set-cookie") {
             let raw = header.to_str().ok()?;
             for part in raw.split(';') {
                 let trimmed = part.trim();
-                if let Some(value) = trimmed.strip_prefix("sessionid=") {
+                if let Some(value) = trimmed.strip_prefix(&format!("{cookie_name}=")) {
                     return Some(value.to_string());
                 }
             }
         }
         None
+    }
+
+    fn build_page_view_headers(&self, session: &AuthSession) -> Result<HeaderMap, ApiPortError> {
+        let csrf_token = session
+            .csrf_token
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ApiPortError::auth("missing csrftoken for page tracking"))?;
+
+        let mut headers = self
+            .session_headers(session)
+            .map_err(ApiPortError::protocol)?;
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json;charset=utf-8"),
+        );
+        headers.insert("X-Client", HeaderValue::from_static("h5"));
+        headers.insert("xtbz", HeaderValue::from_static("ykt"));
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {csrf_token}"))
+                .map_err(|err| ApiPortError::protocol(format!("invalid auth header: {err}")))?,
+        );
+
+        let cookie = format!("sessionid={}; csrftoken={csrf_token}", session.access_token);
+        headers.insert(
+            reqwest::header::COOKIE,
+            HeaderValue::from_str(&cookie)
+                .map_err(|err| ApiPortError::protocol(format!("invalid track cookie: {err}")))?,
+        );
+
+        Ok(headers)
+    }
+
+    fn build_page_view_payload(
+        &self,
+        session: &AuthSession,
+        lesson: &Lesson,
+        slide_index: u64,
+    ) -> Value {
+        let ts_ms = Utc::now().timestamp_millis();
+        self.build_page_view_payload_at(session, lesson, slide_index, ts_ms)
+    }
+
+    fn build_page_view_payload_at(
+        &self,
+        session: &AuthSession,
+        lesson: &Lesson,
+        slide_index: u64,
+        ts_ms: i64,
+    ) -> Value {
+        let slide_page = slide_index.saturating_add(1);
+        let lesson_id = lesson.lesson_id.0.get();
+        let classroom_id = lesson.course_id.0.get();
+        let page_url = format!(
+            "https://{}/lesson/fullscreen/v3/{lesson_id}/ppt/{slide_page}",
+            self.host
+        );
+        let index_url = format!("https://{}/v2/web/index", self.host);
+        let original_id = session
+            .original_id
+            .clone()
+            .unwrap_or_else(|| format!("user-{}", session.user_id));
+        let distinct_id = session.user_id.to_string();
+
+        json!({
+            "uip": "",
+            "data": {
+                "platform": 2,
+                "terminal_type": "web",
+                "time": ts_ms,
+                "language": "zh",
+                "original_id": original_id,
+                "distinct_id": distinct_id,
+                "event": "page_view",
+                "properties": {
+                    "channel": "",
+                    "user_agent": self.user_agent,
+                    "url": page_url,
+                    "classroom_id": classroom_id,
+                    "page_name": lesson.course_name,
+                    "host": self.host,
+                    "referer": index_url,
+                    "original_referrer": index_url
+                }
+            },
+            "ts_ms": ts_ms
+        })
+    }
+
+    #[cfg(test)]
+    fn build_page_view_headers_for_base_url(
+        &self,
+        session: &AuthSession,
+        base_url: &str,
+    ) -> Result<HeaderMap, ApiPortError> {
+        let csrf_token = session
+            .csrf_token
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| ApiPortError::auth("missing csrftoken for page tracking"))?;
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            reqwest::header::COOKIE,
+            HeaderValue::from_str(&format!(
+                "sessionid={}; csrftoken={csrf_token}",
+                session.access_token
+            ))
+            .map_err(|err| ApiPortError::protocol(format!("invalid track cookie: {err}")))?,
+        );
+        headers.insert(
+            reqwest::header::USER_AGENT,
+            HeaderValue::from_str(&self.user_agent)
+                .map_err(|err| ApiPortError::protocol(format!("invalid user-agent: {err}")))?,
+        );
+        headers.insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_str(base_url)
+                .map_err(|err| ApiPortError::protocol(format!("invalid origin: {err}")))?,
+        );
+        headers.insert(
+            reqwest::header::REFERER,
+            HeaderValue::from_str(&format!("{base_url}/v2/web/index"))
+                .map_err(|err| ApiPortError::protocol(format!("invalid referer: {err}")))?,
+        );
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json;charset=utf-8"),
+        );
+        headers.insert("X-Client", HeaderValue::from_static("h5"));
+        headers.insert("xtbz", HeaderValue::from_static("ykt"));
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {csrf_token}"))
+                .map_err(|err| ApiPortError::protocol(format!("invalid auth header: {err}")))?,
+        );
+
+        Ok(headers)
+    }
+
+    #[cfg(test)]
+    fn build_page_view_payload_for_base_url_at(
+        &self,
+        session: &AuthSession,
+        lesson: &Lesson,
+        slide_index: u64,
+        ts_ms: i64,
+        base_url: &str,
+    ) -> Value {
+        let slide_page = slide_index.saturating_add(1);
+        let lesson_id = lesson.lesson_id.0.get();
+        let classroom_id = lesson.course_id.0.get();
+        let page_url = format!("{base_url}/lesson/fullscreen/v3/{lesson_id}/ppt/{slide_page}");
+        let index_url = format!("{base_url}/v2/web/index");
+        let original_id = session
+            .original_id
+            .clone()
+            .unwrap_or_else(|| format!("user-{}", session.user_id));
+        let distinct_id = session.user_id.to_string();
+
+        json!({
+            "uip": "",
+            "data": {
+                "platform": 2,
+                "terminal_type": "web",
+                "time": ts_ms,
+                "language": "zh",
+                "original_id": original_id,
+                "distinct_id": distinct_id,
+                "event": "page_view",
+                "properties": {
+                    "channel": "",
+                    "user_agent": self.user_agent,
+                    "url": page_url,
+                    "classroom_id": classroom_id,
+                    "page_name": lesson.course_name,
+                    "host": base_url,
+                    "referer": index_url,
+                    "original_referrer": index_url
+                }
+            },
+            "ts_ms": ts_ms
+        })
+    }
+
+    #[cfg(test)]
+    async fn report_page_view_to_base_url(
+        &self,
+        base_url: &str,
+        session: &AuthSession,
+        lesson: &Lesson,
+        slide_index: u64,
+    ) -> Result<(), ApiPortError> {
+        let headers = self.build_page_view_headers_for_base_url(session, base_url)?;
+        let payload = self.build_page_view_payload_for_base_url_at(
+            session,
+            lesson,
+            slide_index,
+            Utc::now().timestamp_millis(),
+            base_url,
+        );
+
+        let response = self
+            .client
+            .post(format!("{base_url}/video-log/log/track/"))
+            .headers(headers)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| ApiPortError::request("track page_view", err))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unavailable>".to_string());
+            return Err(ApiPortError::request(
+                "track page_view",
+                format!("unexpected status {status}: {body}"),
+            ));
+        }
+
+        Ok(())
     }
 }
 fn map_problem_type(raw: &Value) -> ProblemType {
@@ -482,6 +740,8 @@ impl ApiPort for YktApiPort {
             access_token: refresh_token.to_string(),
             refresh_token: None,
             expires_at_unix_ms: None,
+            csrf_token: None,
+            original_id: None,
         };
         let headers = self
             .session_headers(&session)
@@ -509,7 +769,42 @@ impl ApiPort for YktApiPort {
             access_token: refresh_token.to_string(),
             refresh_token: None,
             expires_at_unix_ms: None,
+            csrf_token: None,
+            original_id: None,
         })
+    }
+
+    async fn report_page_view(
+        &self,
+        session: &AuthSession,
+        lesson: &Lesson,
+        slide_index: u64,
+    ) -> Result<(), ApiPortError> {
+        let headers = self.build_page_view_headers(session)?;
+        let payload = self.build_page_view_payload(session, lesson, slide_index);
+
+        let response = self
+            .client
+            .post(format!("https://{}/video-log/log/track/", self.host))
+            .headers(headers)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| ApiPortError::request("track page_view", err))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<unavailable>".to_string());
+            return Err(ApiPortError::request(
+                "track page_view",
+                format!("unexpected status {status}: {body}"),
+            ));
+        }
+
+        Ok(())
     }
 
     async fn connect_lesson_stream(
@@ -634,6 +929,12 @@ mod tests {
     use rca_core::domain::ProblemType;
 
     use super::*;
+
+    // Use a non-sensitive test user id to avoid leaking real identifiers in test code
+    const TEST_USER_ID: u64 = 12345;
+    // Use non-sensitive test ids for lesson and classroom
+    const TEST_LESSON_ID: u64 = 16484;
+    const TEST_CLASSROOM_ID: u64 = 31766;
 
     // ── TenantHost ─────────────────────────────────────────────
 
@@ -902,6 +1203,197 @@ mod tests {
         let headers = reqwest::header::HeaderMap::new();
         let result = YktApiPort::extract_session_id(&headers);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn extract_csrf_token_found() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "set-cookie",
+            "csrftoken=csrf123; Path=/; Secure".parse().unwrap(),
+        );
+        let result = YktApiPort::extract_csrf_token(&headers);
+        assert_eq!(result, Some("csrf123".to_string()));
+    }
+
+    #[test]
+    fn build_page_view_headers_contains_required_fields() {
+        let api = YktApiPort::new(YktApiPortConfig {
+            tenant: TenantHost::Hetang,
+            timeout_secs: 5,
+        })
+        .unwrap();
+        let session = AuthSession {
+            user_id: 42,
+            access_token: "session-token".to_string(),
+            refresh_token: None,
+            expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: Some("orig-42".to_string()),
+        };
+
+        let headers = api.build_page_view_headers(&session).unwrap();
+
+        assert_eq!(headers.get("X-Client").unwrap(), "h5");
+        assert_eq!(headers.get("xtbz").unwrap(), "ykt");
+        assert_eq!(
+            headers.get(CONTENT_TYPE).unwrap(),
+            "application/json;charset=utf-8"
+        );
+        assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Bearer csrf-token");
+        assert_eq!(
+            headers.get(reqwest::header::COOKIE).unwrap(),
+            "sessionid=session-token; csrftoken=csrf-token"
+        );
+    }
+
+    #[test]
+    fn build_page_view_payload_contains_expected_tracking_fields() {
+        let api = YktApiPort::new(YktApiPortConfig {
+            tenant: TenantHost::Hetang,
+            timeout_secs: 5,
+        })
+        .unwrap();
+        let session = AuthSession {
+            user_id: TEST_USER_ID,
+            access_token: "session-token".to_string(),
+            refresh_token: None,
+            expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: Some("device-orig".to_string()),
+        };
+        let lesson = Lesson {
+            lesson_id: LessonId(NonZeroU64::new(TEST_LESSON_ID).unwrap()),
+            course_id: CourseId(NonZeroU64::new(TEST_CLASSROOM_ID).unwrap()),
+            course_name: "人工智能产业导引".to_string(),
+            teacher_name: "teacher".to_string(),
+            started_at: None,
+            ended_at: None,
+            status: LessonStatus::Running,
+        };
+
+        let payload = api.build_page_view_payload_at(&session, &lesson, 11, 1_774_352_483_886);
+
+        assert_eq!(payload["ts_ms"], 1_774_352_483_886_i64);
+        assert_eq!(payload["data"]["time"], 1_774_352_483_886_i64);
+        assert_eq!(payload["data"]["event"], "page_view");
+        assert_eq!(payload["data"]["platform"], 2);
+        assert_eq!(payload["data"]["terminal_type"], "web");
+        assert_eq!(payload["data"]["original_id"], "device-orig");
+        assert_eq!(payload["data"]["distinct_id"], TEST_USER_ID.to_string());
+        assert_eq!(
+            payload["data"]["properties"]["classroom_id"],
+            TEST_CLASSROOM_ID
+        );
+        assert_eq!(
+            payload["data"]["properties"]["page_name"],
+            "人工智能产业导引"
+        );
+        assert_eq!(
+            payload["data"]["properties"]["url"].as_str().unwrap(),
+            &format!(
+                "https://pro.yuketang.cn/lesson/fullscreen/v3/{}/ppt/12",
+                TEST_LESSON_ID
+            )
+        );
+        assert_eq!(
+            payload["data"]["properties"]["user_agent"]
+                .as_str()
+                .unwrap(),
+            api.user_agent.as_str()
+        );
+    }
+
+    #[test]
+    fn build_page_view_payload_falls_back_to_synthetic_original_id() {
+        let api = YktApiPort::new(YktApiPortConfig {
+            tenant: TenantHost::Hetang,
+            timeout_secs: 5,
+        })
+        .unwrap();
+        let session = AuthSession {
+            user_id: 99,
+            access_token: "session-token".to_string(),
+            refresh_token: None,
+            expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: None,
+        };
+        let lesson = Lesson {
+            lesson_id: LessonId(NonZeroU64::new(88).unwrap()),
+            course_id: CourseId(NonZeroU64::new(77).unwrap()),
+            course_name: "course".to_string(),
+            teacher_name: "teacher".to_string(),
+            started_at: None,
+            ended_at: None,
+            status: LessonStatus::Running,
+        };
+
+        let payload = api.build_page_view_payload_at(&session, &lesson, 0, 123456789);
+
+        assert_eq!(payload["data"]["original_id"], "user-99");
+        assert_eq!(
+            payload["data"]["properties"]["url"],
+            "https://pro.yuketang.cn/lesson/fullscreen/v3/88/ppt/1"
+        );
+    }
+
+    #[tokio::test]
+    async fn report_page_view_sends_expected_request_to_server() {
+        let mut server = mockito::Server::new_async().await;
+        let api = YktApiPort::new_for_test(&server.url()).unwrap();
+        let session = AuthSession {
+            user_id: TEST_USER_ID,
+            access_token: "session-token".to_string(),
+            refresh_token: None,
+            expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: Some("device-orig".to_string()),
+        };
+        let lesson = Lesson {
+            lesson_id: LessonId(NonZeroU64::new(TEST_LESSON_ID).unwrap()),
+            course_id: CourseId(NonZeroU64::new(TEST_CLASSROOM_ID).unwrap()),
+            course_name: "人工智能产业导引".to_string(),
+            teacher_name: "teacher".to_string(),
+            started_at: None,
+            ended_at: None,
+            status: LessonStatus::Running,
+        };
+
+        let mock = server
+            .mock("POST", "/video-log/log/track/")
+            .match_header("x-client", "h5")
+            .match_header("xtbz", "ykt")
+            .match_header("content-type", mockito::Matcher::Regex("^application/json".to_string()))
+            .match_header("authorization", "Bearer csrf-token")
+            .match_header("cookie", "sessionid=session-token; csrftoken=csrf-token")
+            .match_body(mockito::Matcher::PartialJson(json!({
+                "data": {
+                    "platform": 2,
+                    "terminal_type": "web",
+                    "language": "zh",
+                    "original_id": "device-orig",
+                    "distinct_id": TEST_USER_ID.to_string(),
+                    "event": "page_view",
+                    "properties": {
+                        "url": format!("{}/lesson/fullscreen/v3/{}/ppt/12", server.url(), TEST_LESSON_ID),
+                        "classroom_id": TEST_CLASSROOM_ID,
+                        "page_name": "人工智能产业导引",
+                        "host": server.url(),
+                        "referer": format!("{}/v2/web/index", server.url()),
+                        "original_referrer": format!("{}/v2/web/index", server.url())
+                    }
+                }
+            })))
+            .with_status(200)
+            .create_async()
+            .await;
+
+        api.report_page_view_to_base_url(&server.url(), &session, &lesson, 11)
+            .await
+            .unwrap();
+
+        mock.assert_async().await;
     }
 
     #[test]

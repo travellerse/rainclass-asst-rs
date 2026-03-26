@@ -10,7 +10,12 @@ pub fn session_headers(
     session: &AuthSession,
 ) -> Result<HeaderMap, ApiError> {
     let mut headers = HeaderMap::new();
-    let cookie = format!("sessionid={}", session.access_token);
+    let cookie = match session.csrf_token.as_deref() {
+        Some(csrf_token) if !csrf_token.is_empty() => {
+            format!("sessionid={}; csrftoken={csrf_token}", session.access_token)
+        }
+        _ => format!("sessionid={}", session.access_token),
+    };
     tracing::debug!(
         token_len = session.access_token.len(),
         "attaching session cookie"
