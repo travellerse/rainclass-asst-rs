@@ -155,7 +155,9 @@ impl CoreMonitorEngine {
     }
 
     fn next_page_view_wait(cfg: &MonitorConfig) -> Duration {
-        let jitter_max_ms = cfg.page_view_jitter_max.as_millis() as u64;
+        // Clamp the jitter duration to avoid silent truncation when converting from u128 to u64
+        let jitter_max_ms = cfg.page_view_jitter_max.as_millis().min(u64::MAX as u128) as u64;
+
         if jitter_max_ms == 0 {
             return cfg.page_view_throttle;
         }
