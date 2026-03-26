@@ -19,6 +19,8 @@ pub struct MonitorConfig {
     pub auto_danmu_enabled: bool,
     pub danmu_threshold: usize,
     pub delay_strategy: DelayStrategy,
+    pub page_view_throttle: Duration,
+    pub page_view_jitter_max: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
