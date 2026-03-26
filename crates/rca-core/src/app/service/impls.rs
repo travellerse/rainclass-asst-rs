@@ -229,6 +229,8 @@ impl AppServiceImpl {
                 config.answer_delay_type,
                 config.answer_delay_custom_percent,
             ),
+            page_view_throttle: Duration::from_secs(10 * 60),
+            page_view_jitter_max: Duration::from_secs(120),
         };
 
         match self.deps.monitor_engine.start(session, monitor_cfg).await {
