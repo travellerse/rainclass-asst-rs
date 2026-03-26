@@ -182,9 +182,11 @@ impl YktApiPort {
         );
         headers.insert("X-Client", HeaderValue::from_static("h5"));
         headers.insert("xtbz", HeaderValue::from_static("ykt"));
+        // Use the session access token for Authorization header when reporting
+        // tracking events; CSRF token is sent via cookie as required by the server.
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {csrf_token}"))
+            HeaderValue::from_str(&format!("Bearer {}", session.access_token))
                 .map_err(|err| ApiPortError::protocol(format!("invalid auth header: {err}")))?,
         );
 
@@ -296,9 +298,10 @@ impl YktApiPort {
         );
         headers.insert("X-Client", HeaderValue::from_static("h5"));
         headers.insert("xtbz", HeaderValue::from_static("ykt"));
+        // For test flows we also include an Authorization header with the access token
         headers.insert(
             AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {csrf_token}"))
+            HeaderValue::from_str(&format!("Bearer {}", session.access_token))
                 .map_err(|err| ApiPortError::protocol(format!("invalid auth header: {err}")))?,
         );
 
@@ -1244,7 +1247,7 @@ mod tests {
             headers.get(CONTENT_TYPE).unwrap(),
             "application/json;charset=utf-8"
         );
-        assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Bearer csrf-token");
+        assert_eq!(headers.get(AUTHORIZATION).unwrap(), "Bearer session-token");
         assert_eq!(
             headers.get(reqwest::header::COOKIE).unwrap(),
             "sessionid=session-token; csrftoken=csrf-token"
@@ -1369,7 +1372,7 @@ mod tests {
             .match_header("x-client", "h5")
             .match_header("xtbz", "ykt")
             .match_header("content-type", mockito::Matcher::Regex("^application/json".to_string()))
-            .match_header("authorization", "Bearer csrf-token")
+            .match_header("authorization", "Bearer session-token")
             .match_header("cookie", "sessionid=session-token; csrftoken=csrf-token")
             .match_body(mockito::Matcher::PartialJson(json!({
                 "data": {
