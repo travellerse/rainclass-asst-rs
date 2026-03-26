@@ -150,11 +150,15 @@ impl YktApiPort {
         set_cookie_headers: &reqwest::header::HeaderMap,
         cookie_name: &str,
     ) -> Option<String> {
+        // Avoid allocating the prefix repeatedly for each header/part.
+        // Use `split_once('=')` to compare the name without formatting a new String.
         for header in set_cookie_headers.get_all("set-cookie") {
             let raw = header.to_str().ok()?;
             for part in raw.split(';') {
                 let trimmed = part.trim();
-                if let Some(value) = trimmed.strip_prefix(&format!("{cookie_name}=")) {
+                if let Some((name, value)) = trimmed.split_once('=')
+                    && name == cookie_name
+                {
                     return Some(value.to_string());
                 }
             }
