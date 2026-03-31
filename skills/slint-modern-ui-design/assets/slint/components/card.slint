@@ -7,7 +7,9 @@ export component UiCard inherits Rectangle {
     background: UiTokens.surface;
     border-radius: UiTokens.radius-lg;
     border-width: 1px;
-    border-color: interactive && touch.has-hover ? UiTokens.accent.with_alpha(0.45) : UiTokens.border.with_alpha(0.70);
+    border-color: interactive
+        ? (touch.has-hover ? UiTokens.accent.with_alpha(0.45) : UiTokens.accent-weak)
+        : UiTokens.border.with_alpha(0.70);
 
     drop-shadow-blur: elevated ? UiTokens.shadow-blur-md : 0px;
     drop-shadow-color: UiTokens.shadow-color;
@@ -18,4 +20,3 @@ export component UiCard inherits Rectangle {
 
     @children
 }
-
