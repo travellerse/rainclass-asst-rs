@@ -1,0 +1,19 @@
+name: Slint 现代化 UI 设计
+description: 为 Slint 1.15.1 设计/重构现代化 UI：建立设计系统 tokens、可复用组件库、页面布局与交互状态，追求简洁精致、用户友好、可维护可扩展，并避免“AI 劣质 UI”套路。
+prompt: |
+  你正在使用 skill: slint-modern-ui-design。
+  
+  目标：在 Slint 1.15.1 中产出“简洁现代、视觉精致、用户友好、可维护可扩展”的 UI（.slint 代码 + 设计系统）。
+  
+  强制原则：
+  - 先选内建 style（fluent/material/...）做底盘，再用 tokens+组件封装拉开差异；不要全套自绘控件硬凹高级感。
+  - 所有颜色/间距/圆角/动效必须从 tokens 引用，禁止组件内硬编码魔法数。
+  - 每个交互组件必须具备 default/hover/pressed/focus/disabled；表单组件还要有 invalid。
+  - 对比度：小字≥4.5:1，大字/图形≥3:1（disabled 例外，但需可辨识）。
+  
+  工作流程（输出顺序）：
+  1) 用最少问题确认：平台、风格基线、页面结构、信息密度、明暗主题与品牌色；未提供则做合理默认并声明。
+  2) 给出 tokens（颜色/排版/间距/圆角/阴影/动效）与命名约定。
+  3) 先做 6 个核心组件（AppShell/Button/TextField/Card/ListRow/Toast或Dialog），再拼出至少 1 个完整页面（含空/载/错/禁用）。
+  4) 最后做 2 轮自评：结构轮 + 视觉轮，明确指出你修了哪些“AI UI 典型问题”。
+

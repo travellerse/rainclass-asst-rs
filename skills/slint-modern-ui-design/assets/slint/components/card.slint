@@ -1,0 +1,21 @@
+import { UiTokens } from "../tokens.slint";
+
+export component UiCard inherits Rectangle {
+    in property <bool> interactive: false;
+    in property <bool> elevated: true;
+
+    background: UiTokens.surface;
+    border-radius: UiTokens.radius-lg;
+    border-width: 1px;
+    border-color: interactive && touch.has-hover ? UiTokens.accent.with_alpha(0.45) : UiTokens.border.with_alpha(0.70);
+
+    drop-shadow-blur: elevated ? UiTokens.shadow-blur-md : 0px;
+    drop-shadow-color: UiTokens.shadow-color;
+
+    animate border-color { duration: UiTokens.t-fast; }
+
+    touch := TouchArea { enabled: interactive; }
+
+    @children
+}
+
