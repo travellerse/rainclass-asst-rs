@@ -1,0 +1,58 @@
+import { UiTokens } from "../tokens.slint";
+
+export component PrimaryButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <bool> loading: false;
+    callback clicked();
+
+    // 尺寸：统一高度是“高级感”的关键之一（别到处变高变矮）
+    height: 40px;
+    border-radius: UiTokens.radius-md;
+
+    // 状态颜色
+    background: !enabled ? UiTokens.accent.with_alpha(0.35)
+        : touch.pressed ? UiTokens.accent.with_alpha(0.88)
+        : touch.has-hover ? UiTokens.accent.with_alpha(0.96)
+        : UiTokens.accent;
+
+    border-width: 1px;
+    border-color: UiTokens.accent.with_alpha(enabled ? 0.55 : 0.20);
+
+    animate background { duration: UiTokens.t-fast; }
+    animate border-color { duration: UiTokens.t-fast; }
+
+    touch := TouchArea {
+        enabled: root.enabled && !root.loading;
+        clicked => root.clicked();
+    }
+
+    HorizontalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: UiTokens.space-2;
+        padding-left: UiTokens.space-4;
+        padding-right: UiTokens.space-4;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+
+        // 极简 loading：用轻量占位，不引入过度动效
+        Rectangle {
+            visible: root.loading;
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            background: UiTokens.text.with_alpha(0.9);
+            opacity: 0.65;
+        }
+
+        Text {
+            text: root.text;
+            color: UiTokens.text;
+            opacity: root.enabled ? 1 : 0.75;
+            font-size: UiTokens.text-lg;
+            font-weight: 600;
+        }
+    }
+}
+

@@ -1,0 +1,15 @@
+name: Slint Rust 应用开发
+description: 使用 Rust 开发 Slint 应用：从项目初始化、UI/.slint 组件拆分、properties/callbacks/models 绑定，到线程/异步、性能与打包的最佳实践指导与代码生成。
+prompt: |
+  你正在使用 skill: slint-rust-app-dev。
+  目标：把用户需求落地为可编译可运行的 Slint + Rust 代码，并遵循 Slint 1.15.1 文档与最佳实践（UI 声明式、逻辑 Rust 化、清晰边界、列表用 model、UI 线程轻量）。
+  
+  工作方式：
+  1) 先用最少问题确认平台、UI 页面、数据来源与列表规模；未提供则按默认假设继续并声明。
+  2) 明确 UI↔Rust 接口（properties/callbacks/models），再写具体代码。
+  3) 依赖版本默认 pin 到 slint = "1.15.1"；若用户要升级旧项目，优先建议使用 slint-updater 迁移 .slint 语法。
+  4) 给出可运行的工程结构（Cargo.toml、src、ui/*.slint，以及必要的 build.rs/宏 include）。
+  5) 对线程/异步：跨线程更新 UI 用 slint::invoke_from_event_loop；在 UI 事件循环内跑 async 用 slint::spawn_local；若涉及 Tokio，按官方约束与推荐写法说明（避免直接 #[tokio::main] 驱动 UI）。
+  6) 若 UI 是表格/网格：优先用 GridLayout 的 for/if 动态能力；表单状态优先用 struct 字段的双向绑定（<=>）。
+  7) 最后附上运行方式与边界状态（加载/空/错/禁用）。
+

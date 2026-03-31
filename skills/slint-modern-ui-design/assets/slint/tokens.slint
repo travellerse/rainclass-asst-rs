@@ -1,0 +1,55 @@
+// Slint 1.15.1 现代化 UI tokens 模板（可复制到项目 ui/ 目录）
+// 目标：克制、清晰层级、良好可读性、可维护（所有组件只引用 tokens）
+
+import { Palette, StyleMetrics } from "std-widgets.slint";
+
+export global UiTokens {
+    // ── Spacing（基于 4/8 体系，并向 StyleMetrics 对齐） ──
+    out property <length> space-1: 4px;
+    out property <length> space-2: 8px;
+    out property <length> space-3: 12px;
+    out property <length> space-4: 16px;
+    out property <length> space-5: 24px;
+    out property <length> space-6: 32px;
+    out property <length> space-7: 40px;
+
+    // 平台 style 建议间距（用于“跟随系统”）
+    out property <length> layout-padding: StyleMetrics.layout-padding;
+    out property <length> layout-spacing: StyleMetrics.layout-spacing;
+
+    // ── Radius ──
+    out property <length> radius-sm: 8px;
+    out property <length> radius-md: 12px;
+    out property <length> radius-lg: 16px;
+
+    // ── Motion ──
+    out property <duration> t-fast: 140ms;
+    out property <duration> t-normal: 220ms;
+
+    // ── Typography（建议按项目字体微调） ──
+    out property <length> text-sm: 12px;
+    out property <length> text-md: 14px;
+    out property <length> text-lg: 16px;
+    out property <length> title-sm: 18px;
+    out property <length> title-md: 22px;
+    out property <length> title-lg: 28px;
+
+    // ── Color（默认跟随 Palette；如需品牌化，在此覆写） ──
+    out property <color> bg: Palette.background;
+    out property <color> surface: Palette.window-background;
+    out property <color> border: Palette.border;
+    out property <color> text: Palette.foreground;
+    out property <color> text-muted: Palette.foreground.with_alpha(0.72);
+    out property <color> text-faint: Palette.foreground.with_alpha(0.56);
+
+    // accent：默认使用 palette 的 accent（各 style 会不同），也可替换为品牌色
+    out property <color> accent: Palette.accent;
+    out property <color> accent-weak: Palette.accent.with_alpha(0.14);
+    out property <color> accent-strong: Palette.accent;
+
+    // ── Shadow（轻量，不要厚重） ──
+    out property <length> shadow-blur-sm: 10px;
+    out property <length> shadow-blur-md: 18px;
+    out property <color> shadow-color: rgba(0, 0, 0, 0.28);
+}
+

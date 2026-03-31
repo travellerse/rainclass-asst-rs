@@ -1,0 +1,53 @@
+import { UiTokens } from "../tokens.slint";
+import { UiCard } from "./card.slint";
+
+// 一个“稳”的应用骨架：清晰层级 + 统一留白 + 可扩展 slot
+export component AppShell inherits Rectangle {
+    in property <string> title: "App";
+    in property <string> subtitle: "";
+
+    background: UiTokens.bg;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: UiTokens.space-4;
+        padding: UiTokens.layout-padding > 0px ? UiTokens.layout-padding : UiTokens.space-6;
+
+        // Header（固定节奏）
+        VerticalLayout {
+            spacing: UiTokens.space-1;
+
+            Text {
+                text: root.title;
+                font-size: UiTokens.title-md;
+                font-weight: 700;
+                color: UiTokens.text;
+            }
+
+            Text {
+                visible: root.subtitle != "";
+                text: root.subtitle;
+                font-size: UiTokens.text-md;
+                color: UiTokens.text-muted;
+            }
+        }
+
+        // Content container
+        UiCard {
+            elevated: false;
+            border-radius: UiTokens.radius-lg;
+            width: parent.width;
+            height: 1*;
+
+            VerticalLayout {
+                width: parent.width;
+                height: parent.height;
+                padding: UiTokens.space-5;
+                spacing: UiTokens.space-4;
+
+                @children
+            }
+        }
+    }
+}
