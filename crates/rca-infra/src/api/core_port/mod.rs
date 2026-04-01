@@ -135,7 +135,14 @@ impl YktApiPort {
                 message: msg.to_string(),
             });
         }
-        Ok(response.get("data").cloned().unwrap_or(Value::Null))
+
+        let data = response.get("data").cloned().unwrap_or(Value::Null);
+        // Sometimes the user data is nested in data.user
+        if let Some(user_data) = data.get("user") {
+            Ok(user_data.clone())
+        } else {
+            Ok(data)
+        }
     }
 
     fn extract_session_id(set_cookie_headers: &reqwest::header::HeaderMap) -> Option<String> {
@@ -765,9 +772,29 @@ impl ApiPort for YktApiPort {
             .await
             .map_err(|err| ApiPortError::request("refresh basic-info decode", err))?;
 
-        let data = Self::parse_api_ok(value).map_err(ApiPortError::protocol)?;
-        let user_id = data.get("id").and_then(Value::as_u64).unwrap_or(0);
+        let data = Self::parse_api_ok(value.clone()).map_err(|e| {
+            tracing::warn!("refresh basic-info parse error: {e}, payload: {value}");
+            ApiPortError::protocol(e)
+        })?;
+
+        let user_id = data
+            .get("userId")
+            .and_then(Value::as_u64)
+            .or_else(|| data.get("id").and_then(Value::as_u64))
+            .or_else(|| data.get("user_id").and_then(Value::as_u64))
+            // Handle the case where the id is parsed as a string containing numbers
+            .or_else(|| {
+                data.get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|s| s.parse::<u64>().ok())
+            })
+            .unwrap_or(0);
+
         if user_id == 0 {
+            tracing::warn!(
+                "Failed to extract user ID from basic-info response: {}",
+                data
+            );
             return Err(ApiPortError::protocol("refresh basic-info missing user id"));
         }
 
