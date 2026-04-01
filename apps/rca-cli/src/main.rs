@@ -200,6 +200,19 @@ fn print_login_qr(payload: &str) {
     }
 }
 
+fn create_spinner(message: &str) -> indicatif::ProgressBar {
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(message.to_string());
+    pb
+}
+
 async fn do_login(
     app: &std::sync::Arc<rca_core::app::AppServiceImpl>,
     attempts: u32,
@@ -231,17 +244,9 @@ async fn do_login(
         .saturating_mul(interval_secs.max(1))
         .max(1);
 
-    let pb = indicatif::ProgressBar::new_spinner();
-    pb.enable_steady_tick(std::time::Duration::from_millis(100));
-    pb.set_style(
-        indicatif::ProgressStyle::default_spinner()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-            .template("{spinner:.green} {msg}")
-            .unwrap(),
-    );
-    pb.set_message("正在等待扫码结果...");
+    let pb = create_spinner("正在等待扫码结果...");
 
-    let _ = app
+    let await_result = app
         .handle_command(AppCommand::AwaitLogin {
             scene_id,
             timeout_secs,
@@ -249,6 +254,9 @@ async fn do_login(
         .await;
 
     pb.finish_and_clear();
+
+    // Propagate the error if the await operation failed (e.g. network issues)
+    await_result?;
 
     let state = app.handle_query(AppQuery::GetAppState).await?;
     let AppQueryResult::State(state) = state else {
@@ -490,15 +498,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } => {
             ensure_logged_in(&app).await?;
             let save_dir = std::path::PathBuf::from(dir);
-            let pb = indicatif::ProgressBar::new_spinner();
-            pb.enable_steady_tick(std::time::Duration::from_millis(100));
-            pb.set_style(
-                indicatif::ProgressStyle::default_spinner()
-                    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
-                    .template("{spinner:.green} {msg}")
-                    .unwrap(),
-            );
-            pb.set_message(format!(
+            let pb = create_spinner(&format!(
                 "正在下载并解析 PPT (ID: {})，这可能需要一段时间...",
                 presentation_id
             ));
@@ -516,6 +516,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Err(e) => {
                     pb.finish_with_message(format!("PPT 下载失败: {}", e));
+                    return Err(e.into());
                 }
             }
         }
