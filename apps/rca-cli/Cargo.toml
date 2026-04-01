@@ -9,6 +9,7 @@ default = []
 [dependencies]
 rca-app = { version = "0.1.0", path = "../../crates/rca-app" }
 rca-core = { version = "0.1.0", path = "../../crates/rca-core" }
+rca-infra = { version = "0.1.0", path = "../../crates/rca-infra" }
 clap.workspace = true
 qrcode = "0.14"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
@@ -19,3 +20,4 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 tracing-appender = "0.2.4"
 rust-i18n.workspace = true
+indicatif = "0.18.4"

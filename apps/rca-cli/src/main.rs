@@ -38,8 +38,7 @@ enum Command {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    StartMonitor,
-    StopMonitor,
+    /// Start monitoring lessons (blocking)
     Monitor {
         #[arg(long)]
         duration_secs: Option<u64>,
@@ -52,6 +51,8 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// List active lessons
+    Lessons,
     /// Download a presentation as PDF
     DownloadPpt {
         #[arg(long)]
@@ -66,7 +67,13 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
     Get,
-    SetTenant { tenant: String },
+    SetTenant {
+        tenant: String,
+    },
+    /// Open the configuration file in the default editor
+    Edit,
+    /// Print the path to the configuration file
+    Path,
 }
 
 fn default_config() -> AppConfigDto {
@@ -193,6 +200,103 @@ fn print_login_qr(payload: &str) {
     }
 }
 
+async fn do_login(
+    app: &std::sync::Arc<rca_core::app::AppServiceImpl>,
+    attempts: u32,
+    interval_secs: u64,
+) -> Result<(), Box<dyn Error>> {
+    app.handle_command(AppCommand::LoginByQr).await?;
+    let state = app.handle_query(AppQuery::GetAppState).await?;
+    let scene_id = match state {
+        AppQueryResult::State(state) => match state.auth_state {
+            AuthState::WaitingQrScan { scene_id, token } => {
+                println!("scene_id        : {scene_id}");
+                println!("token           : {token}");
+                let terminal_payload = resolve_terminal_qr_payload(&token).await;
+                if terminal_payload != token {
+                    println!("已自动解析为可直接扫码内容。\n");
+                }
+                print_login_qr(&terminal_payload);
+                println!("请在手机端确认登录。");
+                scene_id
+            }
+            AuthState::WaitingConfirm { scene_id } => scene_id,
+            other => {
+                return Err(format!("unexpected auth state after login start: {other:?}").into());
+            }
+        },
+        _ => return Err("unexpected query result type for state".into()),
+    };
+    let timeout_secs = (attempts as u64)
+        .saturating_mul(interval_secs.max(1))
+        .max(1);
+
+    let pb = indicatif::ProgressBar::new_spinner();
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    pb.set_message("正在等待扫码结果...");
+
+    let _ = app
+        .handle_command(AppCommand::AwaitLogin {
+            scene_id,
+            timeout_secs,
+        })
+        .await;
+
+    pb.finish_and_clear();
+
+    let state = app.handle_query(AppQuery::GetAppState).await?;
+    let AppQueryResult::State(state) = state else {
+        return Err("unexpected query result type for state".into());
+    };
+
+    match state.auth_state {
+        AuthState::LoggedIn { user_id } => {
+            println!("登录成功: {user_id}");
+        }
+        AuthState::Failed { reason } => {
+            println!("登录失败: {reason}");
+        }
+        _ => {
+            println!("登录等待超时，请重试 login 命令。");
+        }
+    }
+    Ok(())
+}
+
+async fn ensure_logged_in(
+    app: &std::sync::Arc<rca_core::app::AppServiceImpl>,
+) -> Result<(), Box<dyn Error>> {
+    let state = app.handle_query(AppQuery::GetAppState).await?;
+    let AppQueryResult::State(state) = state else {
+        return Err("unexpected query result type for state".into());
+    };
+
+    let mut needs_login = matches!(
+        state.auth_state,
+        AuthState::LoggedOut | AuthState::Failed { .. }
+    );
+
+    if !needs_login {
+        // Try to refresh session to ensure it's valid
+        if let Err(e) = app.handle_command(AppCommand::RefreshSession).await {
+            println!("会话验证失败 (可能已过期): {}", e);
+            needs_login = true;
+        }
+    }
+
+    if needs_login {
+        println!("尚未登录或会话已过期，即将开始登录流程...");
+        do_login(app, 20, 1).await?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
@@ -219,59 +323,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             attempts,
             interval_secs,
         } => {
-            app.handle_command(AppCommand::LoginByQr).await?;
-            let state = app.handle_query(AppQuery::GetAppState).await?;
-            let scene_id = match state {
-                AppQueryResult::State(state) => match state.auth_state {
-                    AuthState::WaitingQrScan { scene_id, token } => {
-                        println!("scene_id        : {scene_id}");
-                        println!("token           : {token}");
-                        let terminal_payload = resolve_terminal_qr_payload(&token).await;
-                        if terminal_payload != token {
-                            println!("已自动解析为可直接扫码内容。\n");
-                        }
-                        print_login_qr(&terminal_payload);
-                        println!("请在手机端确认登录。");
-                        scene_id
-                    }
-                    AuthState::WaitingConfirm { scene_id } => scene_id,
-                    other => {
-                        return Err(
-                            format!("unexpected auth state after login start: {other:?}").into(),
-                        );
-                    }
-                },
-                _ => return Err("unexpected query result type for state".into()),
-            };
-            let timeout_secs = (attempts as u64)
-                .saturating_mul(interval_secs.max(1))
-                .max(1);
-            app.handle_command(AppCommand::AwaitLogin {
-                scene_id,
-                timeout_secs,
-            })
-            .await?;
-
-            let state = app.handle_query(AppQuery::GetAppState).await?;
-            let AppQueryResult::State(state) = state else {
-                return Err("unexpected query result type for state".into());
-            };
-
-            match state.auth_state {
-                AuthState::LoggedIn { user_id } => {
-                    println!("登录成功: {user_id}");
-                }
-                AuthState::Failed { reason } => {
-                    println!("登录失败: {reason}");
-                }
-                _ => {
-                    println!("登录等待超时，请重试 login 命令。");
-                }
-            }
+            do_login(&app, attempts, interval_secs).await?;
         }
         Command::RefreshSession => {
-            app.handle_command(AppCommand::RefreshSession).await?;
-            println!("会话刷新完成");
+            ensure_logged_in(&app).await?;
+            println!("会话验证/刷新完成");
             let state = app.handle_query(AppQuery::GetAppState).await?;
             print_state(state)?;
         }
@@ -301,20 +357,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
         }
-        Command::StartMonitor => {
-            app.handle_command(AppCommand::StartMonitor).await?;
-            info!("监控已启动。");
-            let state = app.handle_query(AppQuery::GetAppState).await?;
-            print_state(state)?;
-        }
-        Command::StopMonitor => {
-            app.handle_command(AppCommand::StopMonitor).await?;
-            info!("监控已停止。");
-        }
         Command::Monitor {
             duration_secs,
             auto_download_ppt,
         } => {
+            ensure_logged_in(&app).await?;
             let mut rx = app.subscribe_events();
             let mut downloaded_presentations = std::collections::HashSet::new();
             app.handle_command(AppCommand::StartMonitor).await?;
@@ -416,19 +463,81 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     );
                 }
             }
+            ConfigCommand::Path => {
+                let paths = rca_infra::storage::AppPaths::detect()?;
+                println!("{}", paths.config_file.display());
+            }
+            ConfigCommand::Edit => {
+                let paths = rca_infra::storage::AppPaths::detect()?;
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                println!("正在使用 {} 打开配置文件...", editor);
+                let status = std::process::Command::new(&editor)
+                    .arg(&paths.config_file)
+                    .status()?;
+                if status.success() {
+                    // Try to reload config
+                    app.handle_command(AppCommand::LoadConfig).await?;
+                    println!("配置文件已保存并重新加载。");
+                } else {
+                    println!("编辑器异常退出，未加载新配置。");
+                }
+            }
         },
         Command::DownloadPpt {
             presentation_id,
             lesson_id,
             dir,
         } => {
+            ensure_logged_in(&app).await?;
             let save_dir = std::path::PathBuf::from(dir);
-            app.handle_command(AppCommand::DownloadPresentation {
-                presentation_id,
-                lesson_id,
-                save_dir,
-            })
-            .await?;
+            let pb = indicatif::ProgressBar::new_spinner();
+            pb.enable_steady_tick(std::time::Duration::from_millis(100));
+            pb.set_style(
+                indicatif::ProgressStyle::default_spinner()
+                    .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+                    .template("{spinner:.green} {msg}")
+                    .unwrap(),
+            );
+            pb.set_message(format!(
+                "正在下载并解析 PPT (ID: {})，这可能需要一段时间...",
+                presentation_id
+            ));
+
+            match app
+                .handle_command(AppCommand::DownloadPresentation {
+                    presentation_id,
+                    lesson_id,
+                    save_dir,
+                })
+                .await
+            {
+                Ok(_) => {
+                    pb.finish_with_message("PPT 下载完成！");
+                }
+                Err(e) => {
+                    pb.finish_with_message(format!("PPT 下载失败: {}", e));
+                }
+            }
+        }
+        Command::Lessons => {
+            let state = app.handle_query(AppQuery::GetAppState).await?;
+            let AppQueryResult::State(state) = state else {
+                return Err("unexpected query result type for state".into());
+            };
+            if state.current_lessons.is_empty() {
+                println!("当前没有活跃的课程。");
+            } else {
+                println!("当前活跃课程：");
+                for lesson in state.current_lessons {
+                    println!(
+                        " - ID: {} | 课程名: {} | 教师: {} | 状态: {:?}",
+                        lesson.lesson_id.0.get(),
+                        lesson.course_name,
+                        lesson.teacher_name,
+                        lesson.status
+                    );
+                }
+            }
         }
     }
 
