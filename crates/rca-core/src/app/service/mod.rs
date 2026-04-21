@@ -1,10 +1,10 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod api;
 mod background;
 mod impls;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 
 use crate::app::ports::{
     ApiPort, ConfigStorePort, NotifierPort, SessionStorePort, UpdateCheckerPort,

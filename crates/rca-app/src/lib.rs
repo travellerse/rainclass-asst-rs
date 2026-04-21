@@ -112,22 +112,25 @@ async fn build_core_app(options: &BootstrapOptions) -> Result<Arc<AppServiceImpl
 
     let monitor = Arc::new(rca_core::monitor::CoreMonitorEngine::new(api_port.clone()));
 
-    let app = Arc::new(AppServiceImpl::new_started(
-        CoreAppDeps {
-            api: api_port,
-            config_store: Arc::new(rca_infra::bridge::CoreConfigStoreAdapter::new(config_repo)),
-            session_store: Arc::new(rca_infra::bridge::CoreSessionStoreAdapter::new(
-                session_repo,
-                credential_store,
-            )),
-            notifier: Arc::new(rca_infra::bridge::CoreNotifierAdapter::new(notifier)),
-            update_checker: Arc::new(rca_infra::bridge::CoreUpdateCheckerAdapter::new(
-                update_checker,
-            )),
-            monitor_engine: monitor,
-        },
-        options.default_config.clone(),
-    ));
+    let app = Arc::new(
+        AppServiceImpl::new_started(
+            CoreAppDeps {
+                api: api_port,
+                config_store: Arc::new(rca_infra::bridge::CoreConfigStoreAdapter::new(config_repo)),
+                session_store: Arc::new(rca_infra::bridge::CoreSessionStoreAdapter::new(
+                    session_repo,
+                    credential_store,
+                )),
+                notifier: Arc::new(rca_infra::bridge::CoreNotifierAdapter::new(notifier)),
+                update_checker: Arc::new(rca_infra::bridge::CoreUpdateCheckerAdapter::new(
+                    update_checker,
+                )),
+                monitor_engine: monitor,
+            },
+            options.default_config.clone(),
+        )
+        .await,
+    );
 
     Ok(app)
 }

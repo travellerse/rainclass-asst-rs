@@ -14,7 +14,9 @@ fn should_refresh_ui_on_event() -> bool {
 /// Spawn a background loop that listens to application events and triggers UI
 /// state sync whenever a new event arrives.
 pub fn start_event_loop(controller: Arc<DesktopController>, ui_handle: Weak<crate::AppWindow>) {
-    let mut rx = controller.app.subscribe_events();
+    let mut rx = controller
+        .runtime
+        .block_on(controller.app.subscribe_events());
     let runner = CommandRunner::new(controller.clone());
     controller.spawn_task(async move {
         let mut dirty = false;

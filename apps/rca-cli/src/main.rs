@@ -333,7 +333,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             print_state(state)?;
         }
         Command::CheckUpdate => {
-            let mut rx = app.subscribe_events();
+            let mut rx = app.subscribe_events().await;
             app.handle_command(AppCommand::CheckUpdate).await?;
             match tokio::time::timeout(Duration::from_millis(300), rx.recv()).await {
                 Ok(Some(AppEvent::UpdateAvailable { version, url })) => {
@@ -363,7 +363,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             auto_download_ppt,
         } => {
             ensure_logged_in(&app).await?;
-            let mut rx = app.subscribe_events();
+            let mut rx = app.subscribe_events().await;
             let mut downloaded_presentations = std::collections::HashSet::new();
             app.handle_command(AppCommand::StartMonitor).await?;
             if let Some(secs) = duration_secs {

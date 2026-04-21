@@ -293,7 +293,8 @@ async fn login_flow_should_update_state_to_logged_in() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -340,7 +341,8 @@ async fn restore_session_should_recover_logged_in_state() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::RestoreSession)
         .await
@@ -393,7 +395,8 @@ async fn load_config_should_sync_runtime_config_from_store() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoadConfig)
         .await
@@ -440,7 +443,8 @@ async fn refresh_session_should_update_saved_session_token() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::RefreshSession)
         .await
@@ -479,7 +483,8 @@ async fn refresh_session_should_fallback_to_access_token_when_refresh_missing() 
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::RefreshSession)
         .await
@@ -509,7 +514,8 @@ async fn start_monitor_should_fail_when_logged_out() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     let result = app.handle_command(AppCommand::StartMonitor).await;
     assert!(matches!(result, Err(AppError::InvalidCommand(_))));
@@ -534,9 +540,10 @@ async fn check_update_should_emit_update_available_event() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
-    let mut events = app.subscribe_events();
+    let mut events = app.subscribe_events().await;
     app.handle_command(AppCommand::CheckUpdate)
         .await
         .expect("check update failed");
@@ -558,7 +565,8 @@ async fn start_and_stop_monitor_should_toggle_running_state() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -644,7 +652,8 @@ async fn monitor_should_emit_auto_answer_event_when_problem_available() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         config,
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -698,7 +707,8 @@ async fn stop_monitor_should_use_handle_returned_by_start() {
             monitor_engine: monitor_engine.clone(),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -768,7 +778,8 @@ async fn monitor_should_not_emit_auto_answer_event_when_disabled() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         config,
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -821,7 +832,8 @@ async fn save_config_should_persist_and_update_runtime() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     let mut new_config = default_config();
     new_config.monitor_interval_secs = 42;
@@ -858,7 +870,8 @@ async fn logout_should_clear_session_and_stop_monitor() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -902,7 +915,8 @@ async fn get_recent_events_should_respect_limit() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     let result = app
         .handle_query(AppQuery::GetRecentEvents { limit: 0 })
@@ -928,7 +942,8 @@ async fn refresh_session_without_session_should_fail() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     let result = app.handle_command(AppCommand::RefreshSession).await;
     assert!(matches!(result, Err(AppError::InvalidCommand(_))));
@@ -966,7 +981,8 @@ async fn start_monitor_when_already_running_is_noop() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
     app.handle_command(AppCommand::LoginByQr)
         .await
@@ -1011,9 +1027,10 @@ async fn check_update_no_update_should_not_emit_event() {
             monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
         },
         default_config(),
-    );
+    )
+    .await;
 
-    let mut events = app.subscribe_events();
+    let mut events = app.subscribe_events().await;
     app.handle_command(AppCommand::CheckUpdate)
         .await
         .expect("check update failed");

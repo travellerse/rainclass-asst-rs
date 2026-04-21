@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::Duration;
 
 use crate::app::AppEvent;
@@ -15,8 +15,10 @@ use super::InnerState;
 use super::background;
 use super::{AppServiceImpl, CoreAppDeps};
 
-fn lock_inner<'a>(inner: &'a Arc<Mutex<InnerState>>) -> std::sync::MutexGuard<'a, InnerState> {
-    inner.lock().expect("core app state poisoned")
+async fn lock_inner<'a>(
+    inner: &'a Arc<Mutex<InnerState>>,
+) -> tokio::sync::MutexGuard<'a, InnerState> {
+    inner.lock().await
 }
 
 impl AppServiceImpl {
@@ -40,70 +42,77 @@ impl AppServiceImpl {
         }
     }
 
-    pub fn new_started(deps: CoreAppDeps, initial_config: crate::app::AppConfigDto) -> Self {
+    pub async fn new_started(deps: CoreAppDeps, initial_config: crate::app::AppConfigDto) -> Self {
         let service = Self::new(deps, initial_config);
-        service.start_background_tasks();
+        service.start_background_tasks().await;
         service
     }
 
-    pub fn start_background_tasks(&self) {
-        background::start_background_tasks(self);
+    pub async fn start_background_tasks(&self) {
+        background::start_background_tasks(self).await;
     }
 
-    pub fn stop_background_tasks(&self) {
-        background::stop_background_tasks(self);
+    pub async fn stop_background_tasks(&self) {
+        background::stop_background_tasks(self).await;
     }
 
-    pub(super) fn with_inner<R>(&self, f: impl FnOnce(&InnerState) -> R) -> R {
-        let guard = lock_inner(&self.inner);
+    pub(super) async fn with_inner<R>(&self, f: impl FnOnce(&InnerState) -> R) -> R {
+        let guard = lock_inner(&self.inner).await;
         f(&guard)
     }
 
-    pub(super) fn with_inner_mut<R>(&self, f: impl FnOnce(&mut InnerState) -> R) -> R {
-        let mut guard = lock_inner(&self.inner);
+    pub(super) async fn with_inner_mut<R>(&self, f: impl FnOnce(&mut InnerState) -> R) -> R {
+        let mut guard = lock_inner(&self.inner).await;
         f(&mut guard)
     }
 
-    pub(super) fn set_auth_logged_in(&self, user_id: u64) {
+    pub(super) async fn set_auth_logged_in(&self, user_id: u64) {
         self.with_inner_mut(|inner| {
             inner.app_state.auth_state = AuthState::LoggedIn { user_id };
-        });
+        })
+        .await;
     }
 
-    pub(super) fn set_auth_logged_out(&self) {
+    pub(super) async fn set_auth_logged_out(&self) {
         self.with_inner_mut(|inner| {
             inner.app_state.auth_state = AuthState::LoggedOut;
-        });
+        })
+        .await;
     }
 
-    pub(super) fn set_auth_waiting_qr(&self, scene_id: String, token: String) {
+    pub(super) async fn set_auth_waiting_qr(&self, scene_id: String, token: String) {
         self.with_inner_mut(|inner| {
             inner.app_state.auth_state = AuthState::WaitingQrScan { scene_id, token };
-        });
+        })
+        .await;
     }
 
-    pub(super) fn set_auth_failed(&self, reason: String) {
+    pub(super) async fn set_auth_failed(&self, reason: String) {
         self.with_inner_mut(|inner| {
             inner.app_state.auth_state = AuthState::Failed { reason };
-        });
+        })
+        .await;
     }
 
-    pub(super) fn set_monitor_running(&self, running: bool) {
+    pub(super) async fn set_monitor_running(&self, running: bool) {
         self.with_inner_mut(|inner| {
             inner.app_state.monitor_running = running;
-        });
+        })
+        .await;
     }
 
-    pub(super) fn clear_last_error(&self) {
+    pub(super) async fn clear_last_error(&self) {
         self.with_inner_mut(|inner| {
             inner.app_state.last_error = None;
-        });
+        })
+        .await;
     }
 
-    pub(super) fn set_last_error(&self, error: String) {
+    pub(super) async fn set_last_error(&self, error: String) {
         self.with_inner_mut(|inner| {
             inner.app_state.last_error = Some(error);
-        });
+        })
+        .await;
     }
 
     pub(super) async fn emit_event(&self, event: AppEvent) {
@@ -112,7 +121,7 @@ impl AppServiceImpl {
 
     pub(super) async fn emit_event_with_inner(inner: &Arc<Mutex<InnerState>>, event: AppEvent) {
         let subscribers = {
-            let guard = lock_inner(inner);
+            let guard = lock_inner(inner).await;
             guard.subscribers.clone()
         };
 
@@ -123,7 +132,7 @@ impl AppServiceImpl {
             }
         }
 
-        let mut guard = lock_inner(inner);
+        let mut guard = lock_inner(inner).await;
         guard.subscribers = active_subscribers;
     }
 
@@ -133,7 +142,7 @@ impl AppServiceImpl {
 
     pub(super) async fn emit_state_changed_with_inner(inner: &Arc<Mutex<InnerState>>) {
         let snapshot = {
-            let guard = lock_inner(inner);
+            let guard = lock_inner(inner).await;
             guard.app_state.clone()
         };
         Self::emit_event_with_inner(inner, AppEvent::StateChanged(snapshot)).await;
@@ -160,24 +169,24 @@ impl AppServiceImpl {
                     .save_session(&session)
                     .await
                     .map_err(crate::app::AppError::from)?;
-                self.set_auth_logged_in(session.user_id);
+                self.set_auth_logged_in(session.user_id).await;
                 Some(AppNotification {
                     title: "登录成功".to_string(),
                     body: "会话已建立并保存。".to_string(),
                 })
             }
             QrLoginProgress::Expired => {
-                self.set_auth_failed("二维码已过期".to_string());
+                self.set_auth_failed("二维码已过期".to_string()).await;
                 None
             }
             QrLoginProgress::Rejected => {
-                self.set_auth_failed("登录被拒绝".to_string());
+                self.set_auth_failed("登录被拒绝".to_string()).await;
                 None
             }
         };
 
         if let Some(message) = maybe_notify {
-            let config = self.with_inner(|inner| inner.config.clone());
+            let config = self.with_inner(|inner| inner.config.clone()).await;
             if config.notify_enabled
                 && Self::notify_event_enabled(&config, notify_event_keys::LOGIN_SUCCESS)
             {
@@ -198,7 +207,9 @@ impl AppServiceImpl {
     }
 
     pub(super) async fn stop_monitor_engine(&self) {
-        let monitor_handle = self.with_inner_mut(|inner| inner.monitor_handle.take());
+        let monitor_handle = self
+            .with_inner_mut(|inner| inner.monitor_handle.take())
+            .await;
 
         if let Some(monitor_handle) = monitor_handle {
             if let Err(e) = self.deps.monitor_engine.stop(monitor_handle).await {
@@ -214,7 +225,7 @@ impl AppServiceImpl {
             Ok(Some(s)) => s,
             _ => return,
         };
-        let config = self.with_inner(|inner| inner.config.clone());
+        let config = self.with_inner(|inner| inner.config.clone()).await;
         let monitor_cfg = crate::monitor::MonitorConfig {
             poll_interval: Duration::from_secs(config.monitor_interval_secs),
             ws_reconnect_backoff_base: Duration::from_secs(5),
@@ -237,26 +248,29 @@ impl AppServiceImpl {
             Ok(monitor_handle) => {
                 self.with_inner_mut(|inner| {
                     inner.monitor_handle = Some(monitor_handle);
-                });
+                })
+                .await;
             }
             Err(e) => {
                 tracing::error!(error = ?e, "failed to start monitor engine");
                 self.with_inner_mut(|inner| {
                     inner.monitor_handle = None;
-                });
-                self.set_last_error(e.to_string());
-                self.set_monitor_running(false);
+                })
+                .await;
+                self.set_last_error(e.to_string()).await;
+                self.set_monitor_running(false).await;
             }
         }
     }
 
-    pub(super) fn subscribe_events_impl(&self) -> mpsc::Receiver<AppEvent> {
+    pub(super) async fn subscribe_events_impl(&self) -> mpsc::Receiver<AppEvent> {
         let (tx, rx) = mpsc::channel(128);
-        self.with_inner_mut(|inner| inner.subscribers.push(tx));
+        self.with_inner_mut(|inner| inner.subscribers.push(tx))
+            .await;
         rx
     }
 
-    pub(super) fn query_impl(
+    pub(super) async fn query_impl(
         &self,
         query: crate::app::AppQuery,
     ) -> Result<crate::app::AppQueryResult, crate::app::AppError> {
@@ -275,5 +289,6 @@ impl AppServiceImpl {
                 Ok(crate::app::AppQueryResult::Events(events))
             }
         })
+        .await
     }
 }
