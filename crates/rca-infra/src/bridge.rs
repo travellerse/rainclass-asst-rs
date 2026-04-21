@@ -34,6 +34,8 @@ pub struct CoreSessionStoreAdapter {
 }
 
 impl CoreSessionStoreAdapter {
+    const KEYRING_TOKEN_MARKER: &'static str = "__keyring__";
+
     pub fn new(
         session_repo: Arc<dyn SessionRepository>,
         credential_store: Arc<dyn CredentialStore>,
@@ -149,7 +151,7 @@ impl SessionStorePort for CoreSessionStoreAdapter {
 
         // 2. 如果keyring没有，但文件中有实际token（迁移场景）
         // 保存到keyring并更新文件为标记
-        if !record.access_token.is_empty() && record.access_token != "__keyring__" {
+        if !record.access_token.is_empty() && record.access_token != Self::KEYRING_TOKEN_MARKER {
             // 保存到keyring
             self.credential_store
                 .save_token_pair(
@@ -167,8 +169,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
             // 更新session文件，使用keyring标记，不存储实际token
             let sanitized_record = SessionRecord {
                 user_id: record.user_id,
-                access_token: "__keyring__".to_string(),
-                refresh_token: Some("__keyring__".to_string()),
+                access_token: Self::KEYRING_TOKEN_MARKER.to_string(),
+                refresh_token: Some(Self::KEYRING_TOKEN_MARKER.to_string()),
                 expires_at_unix_ms: record.expires_at_unix_ms,
                 csrf_token: record.csrf_token.clone(),
                 original_id: record.original_id.clone(),
@@ -214,8 +216,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
         self.session_repo
             .save(&SessionRecord {
                 user_id: session.user_id,
-                access_token: "__keyring__".to_string(),
-                refresh_token: Some("__keyring__".to_string()),
+                access_token: Self::KEYRING_TOKEN_MARKER.to_string(),
+                refresh_token: Some(Self::KEYRING_TOKEN_MARKER.to_string()),
                 expires_at_unix_ms: session.expires_at_unix_ms,
                 csrf_token: session.csrf_token.clone(),
                 original_id: session.original_id.clone(),
@@ -453,8 +455,9 @@ mod tests {
         session_mock
             .expect_save()
             .withf(|record: &SessionRecord| {
-                record.access_token == "__keyring__"
-                    && record.refresh_token == Some("__keyring__".to_string())
+                record.access_token == CoreSessionStoreAdapter::KEYRING_TOKEN_MARKER
+                    && record.refresh_token
+                        == Some(CoreSessionStoreAdapter::KEYRING_TOKEN_MARKER.to_string())
             })
             .returning(|_| Ok(()));
 

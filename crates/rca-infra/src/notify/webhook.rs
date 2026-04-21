@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::{IpAddr, Ipv6Addr, ToSocketAddrs};
 use std::sync::Arc;
 use tracing::{error, info};
 use url::Url;
@@ -36,6 +36,29 @@ fn is_unique_local_ipv6(ip: &Ipv6Addr) -> bool {
 fn is_link_local_ipv6(ip: &Ipv6Addr) -> bool {
     let segments = ip.segments();
     (segments[0] & 0xffc0) == 0xfe80
+}
+
+fn host_resolves_to_private_ip(host: &str) -> Result<bool, NotifyError> {
+    let addrs = (host, 443)
+        .to_socket_addrs()
+        .map_err(|e| NotifyError::SendFailed(format!("Failed to resolve webhook host: {}", e)))?;
+
+    for addr in addrs {
+        match addr.ip() {
+            IpAddr::V4(v4) => {
+                if v4.is_private() || v4.is_loopback() || v4.is_link_local() {
+                    return Ok(true);
+                }
+            }
+            IpAddr::V6(v6) => {
+                if v6.is_loopback() || is_unique_local_ipv6(&v6) || is_link_local_ipv6(&v6) {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 fn validate_webhook_url(url: &str) -> Result<(), NotifyError> {
@@ -76,6 +99,13 @@ fn validate_webhook_url(url: &str) -> Result<(), NotifyError> {
     {
         return Err(NotifyError::PrivateNetworkNotAllowed(format!(
             "Internal hostname {} is not allowed",
+            host
+        )));
+    }
+
+    if host_resolves_to_private_ip(host)? {
+        return Err(NotifyError::PrivateNetworkNotAllowed(format!(
+            "Host {} resolves to private IP",
             host
         )));
     }

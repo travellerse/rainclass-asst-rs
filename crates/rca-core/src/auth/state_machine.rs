@@ -40,9 +40,12 @@ impl AuthState {
 
             // From LoggedIn: can logout, refresh, or fail
             (AuthState::LoggedIn { .. }, AuthEvent::Logout) => Ok(AuthState::LoggedOut),
-            (AuthState::LoggedIn { user_id }, AuthEvent::RefreshStarted { .. }) => {
-                Ok(AuthState::LoggedIn { user_id: *user_id })
-            }
+            (
+                AuthState::LoggedIn { user_id },
+                AuthEvent::RefreshStarted {
+                    user_id: event_user_id,
+                },
+            ) if *user_id == event_user_id => Ok(AuthState::LoggedIn { user_id: *user_id }),
             (AuthState::LoggedIn { .. }, AuthEvent::RefreshSuccess { user_id }) => {
                 Ok(AuthState::LoggedIn { user_id })
             }
