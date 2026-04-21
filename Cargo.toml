@@ -28,7 +28,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 futures-core = "0.3"
 url = "2"
 tracing = "0.1"
-slint = "1.15.1"
-slint-build = "1.15.1"
+slint = "1.16"
+slint-build = "1.16"
 clap = { version = "4", features = ["derive"] }
 rust-i18n = "3"
