@@ -1075,7 +1075,10 @@ async fn await_login_success_should_update_state_to_logged_in() {
     };
 
     assert!(
-        matches!(state.auth_state, crate::auth::AuthState::LoggedIn { user_id: 42 }),
+        matches!(
+            state.auth_state,
+            crate::auth::AuthState::LoggedIn { user_id: 42 }
+        ),
         "expected LoggedIn state with user_id 42, got {:?}",
         state.auth_state
     );

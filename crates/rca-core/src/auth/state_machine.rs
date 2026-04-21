@@ -257,44 +257,56 @@ mod tests {
     fn is_logged_in_returns_true_only_for_logged_in() {
         assert!(AuthState::LoggedIn { user_id: 42 }.is_logged_in());
         assert!(!AuthState::LoggedOut.is_logged_in());
-        assert!(!AuthState::WaitingQrScan {
-            scene_id: "s".into(),
-            token: "t".into(),
-        }
-        .is_logged_in());
-        assert!(!AuthState::Failed {
-            reason: "error".into(),
-        }
-        .is_logged_in());
+        assert!(
+            !AuthState::WaitingQrScan {
+                scene_id: "s".into(),
+                token: "t".into(),
+            }
+            .is_logged_in()
+        );
+        assert!(
+            !AuthState::Failed {
+                reason: "error".into(),
+            }
+            .is_logged_in()
+        );
     }
 
     #[test]
     fn is_waiting_qr_scan_returns_true_only_for_waiting() {
-        assert!(AuthState::WaitingQrScan {
-            scene_id: "s".into(),
-            token: "t".into(),
-        }
-        .is_waiting_qr_scan());
+        assert!(
+            AuthState::WaitingQrScan {
+                scene_id: "s".into(),
+                token: "t".into(),
+            }
+            .is_waiting_qr_scan()
+        );
         assert!(!AuthState::LoggedOut.is_waiting_qr_scan());
         assert!(!AuthState::LoggedIn { user_id: 42 }.is_waiting_qr_scan());
-        assert!(!AuthState::Failed {
-            reason: "error".into(),
-        }
-        .is_waiting_qr_scan());
+        assert!(
+            !AuthState::Failed {
+                reason: "error".into(),
+            }
+            .is_waiting_qr_scan()
+        );
     }
 
     #[test]
     fn is_failed_returns_true_only_for_failed() {
-        assert!(AuthState::Failed {
-            reason: "error".into(),
-        }
-        .is_failed());
+        assert!(
+            AuthState::Failed {
+                reason: "error".into(),
+            }
+            .is_failed()
+        );
         assert!(!AuthState::LoggedOut.is_failed());
         assert!(!AuthState::LoggedIn { user_id: 42 }.is_failed());
-        assert!(!AuthState::WaitingQrScan {
-            scene_id: "s".into(),
-            token: "t".into(),
-        }
-        .is_failed());
+        assert!(
+            !AuthState::WaitingQrScan {
+                scene_id: "s".into(),
+                token: "t".into(),
+            }
+            .is_failed()
+        );
     }
 }
