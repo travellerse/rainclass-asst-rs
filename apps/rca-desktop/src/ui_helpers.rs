@@ -9,9 +9,7 @@ pub fn auth_status_text(state: &AuthState) -> String {
     match state {
         AuthState::LoggedOut => "未登录".to_string(),
         AuthState::WaitingQrScan { .. } => "等待扫码".to_string(),
-        AuthState::WaitingConfirm { .. } => "等待确认".to_string(),
         AuthState::LoggedIn { user_id } => format!("已登录（{user_id}）"),
-        AuthState::Refreshing { user_id } => format!("刷新中（{user_id}）"),
         AuthState::Failed { reason } => format!("失败：{reason}"),
     }
 }
@@ -19,8 +17,8 @@ pub fn auth_status_text(state: &AuthState) -> String {
 pub fn auth_status_kind(state: &AuthState) -> &'static str {
     match state {
         AuthState::LoggedOut => "offline",
-        AuthState::WaitingQrScan { .. } | AuthState::WaitingConfirm { .. } => "waiting",
-        AuthState::LoggedIn { .. } | AuthState::Refreshing { .. } => "online",
+        AuthState::WaitingQrScan { .. } => "waiting",
+        AuthState::LoggedIn { .. } => "online",
         AuthState::Failed { .. } => "error",
     }
 }
@@ -223,19 +221,9 @@ mod tests {
             }),
             "waiting"
         );
-        assert_eq!(
-            auth_status_kind(&AuthState::WaitingConfirm {
-                scene_id: "2".to_string(),
-            }),
-            "waiting"
-        );
 
         assert_eq!(
             auth_status_kind(&AuthState::LoggedIn { user_id: 42 }),
-            "online"
-        );
-        assert_eq!(
-            auth_status_kind(&AuthState::Refreshing { user_id: 42 }),
             "online"
         );
 
