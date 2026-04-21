@@ -129,6 +129,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
         };
 
         let account = Self::account_of(record.user_id);
+
+        // 1. 优先从keyring加载token
         if let Some((access, refresh)) = self
             .credential_store
             .load_token_pair(&self.service_name, &account)
@@ -145,16 +147,40 @@ impl SessionStorePort for CoreSessionStoreAdapter {
             }));
         }
 
+        // 2. 如果keyring没有，但文件中有实际token（迁移场景）
+        // 保存到keyring并更新文件为标记
         if !record.access_token.is_empty() && record.access_token != "__keyring__" {
-            let _ = self
-                .credential_store
+            // 保存到keyring
+            self.credential_store
                 .save_token_pair(
                     &self.service_name,
                     &account,
                     &record.access_token,
                     record.refresh_token.as_deref(),
                 )
-                .await;
+                .await
+                .map_err(|e| {
+                    tracing::warn!("Failed to migrate token to keyring: {}", e);
+                    StoragePortError::save(e)
+                })?;
+
+            // 更新session文件，使用keyring标记，不存储实际token
+            let sanitized_record = SessionRecord {
+                user_id: record.user_id,
+                access_token: "__keyring__".to_string(),
+                refresh_token: Some("__keyring__".to_string()),
+                expires_at_unix_ms: record.expires_at_unix_ms,
+                csrf_token: record.csrf_token.clone(),
+                original_id: record.original_id.clone(),
+            };
+
+            self.session_repo
+                .save(&sanitized_record)
+                .await
+                .map_err(|e| {
+                    tracing::warn!("Failed to update session file with keyring marker: {}", e);
+                    StoragePortError::save(e)
+                })?;
 
             return Ok(Some(AuthSession {
                 user_id: record.user_id,
@@ -171,21 +197,25 @@ impl SessionStorePort for CoreSessionStoreAdapter {
 
     async fn save_session(&self, session: &AuthSession) -> Result<(), StoragePortError> {
         let account = Self::account_of(session.user_id);
-        let _ = self
-            .credential_store
+
+        self.credential_store
             .save_token_pair(
                 &self.service_name,
                 &account,
                 &session.access_token,
                 session.refresh_token.as_deref(),
             )
-            .await;
+            .await
+            .map_err(|e| {
+                tracing::error!("Failed to save token to keyring: {}", e);
+                StoragePortError::save(e)
+            })?;
 
         self.session_repo
             .save(&SessionRecord {
                 user_id: session.user_id,
-                access_token: session.access_token.clone(),
-                refresh_token: session.refresh_token.clone(),
+                access_token: "__keyring__".to_string(),
+                refresh_token: Some("__keyring__".to_string()),
                 expires_at_unix_ms: session.expires_at_unix_ms,
                 csrf_token: session.csrf_token.clone(),
                 original_id: session.original_id.clone(),
@@ -420,8 +450,14 @@ mod tests {
                 original_id: Some("orig-file".to_string()),
             }))
         });
+        session_mock
+            .expect_save()
+            .withf(|record: &SessionRecord| {
+                record.access_token == "__keyring__"
+                    && record.refresh_token == Some("__keyring__".to_string())
+            })
+            .returning(|_| Ok(()));
 
-        // Keyring returns None → should fallback to file token
         let cred = FakeCredStore::new(None);
 
         let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
