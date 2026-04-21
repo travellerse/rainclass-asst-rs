@@ -1038,3 +1038,161 @@ async fn check_update_no_update_should_not_emit_event() {
     let result = tokio::time::timeout(Duration::from_millis(100), events.recv()).await;
     assert!(result.is_err(), "should not have received any event");
 }
+
+#[tokio::test]
+async fn await_login_success_should_update_state_to_logged_in() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+
+    app.handle_command(AppCommand::AwaitLogin {
+        scene_id: "scene-1".to_string(),
+        timeout_secs: 30,
+    })
+    .await
+    .expect("await login failed");
+
+    let state = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state failed");
+    let AppQueryResult::State(state) = state else {
+        panic!("expected state query result");
+    };
+
+    assert!(
+        matches!(state.auth_state, crate::auth::AuthState::LoggedIn { user_id: 42 }),
+        "expected LoggedIn state with user_id 42, got {:?}",
+        state.auth_state
+    );
+}
+
+#[tokio::test]
+async fn await_login_should_save_session() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+
+    app.handle_command(AppCommand::AwaitLogin {
+        scene_id: "scene-1".to_string(),
+        timeout_secs: 30,
+    })
+    .await
+    .expect("await login failed");
+
+    let saved_session = ports.session.lock().unwrap().clone();
+    assert!(saved_session.is_some(), "session should be saved");
+    let session = saved_session.unwrap();
+    assert_eq!(session.user_id, 42);
+    assert_eq!(session.access_token, "access-token");
+}
+
+#[tokio::test]
+async fn download_presentation_should_fail_when_not_logged_in() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    *ports.session.lock().unwrap() = None;
+
+    let result = app
+        .handle_command(AppCommand::DownloadPresentation {
+            presentation_id: 123,
+            lesson_id: None,
+            save_dir: std::path::PathBuf::from("/tmp"),
+        })
+        .await;
+
+    assert!(
+        matches!(result, Err(AppError::InvalidCommand(_))),
+        "expected InvalidCommand error when not logged in, got {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn download_presentation_success_should_emit_notification() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    *ports.session.lock().unwrap() = Some(AuthSession {
+        user_id: 42,
+        access_token: "access-token".to_string(),
+        refresh_token: Some("refresh-token".to_string()),
+        expires_at_unix_ms: None,
+        csrf_token: Some("csrf-token".to_string()),
+        original_id: Some("original-id".to_string()),
+    });
+
+    let mut events = app.subscribe_events().await;
+
+    app.handle_command(AppCommand::DownloadPresentation {
+        presentation_id: 123,
+        lesson_id: Some(456),
+        save_dir: std::path::PathBuf::from("/tmp"),
+    })
+    .await
+    .expect("download presentation failed");
+
+    let event = tokio::time::timeout(Duration::from_millis(100), events.recv())
+        .await
+        .expect("should receive event")
+        .expect("event should not be None");
+
+    match event {
+        crate::app::AppEvent::Notification(notification) => {
+            assert!(notification.title.contains("PPT"));
+            assert!(notification.body.contains("mock.pdf"));
+        }
+        _ => panic!("expected Notification event, got {:?}", event),
+    }
+}
