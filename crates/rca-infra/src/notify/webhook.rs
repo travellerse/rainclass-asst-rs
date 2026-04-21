@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::json;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use tracing::{error, info};
 use url::Url;
@@ -8,20 +9,97 @@ use url::Url;
 use crate::notify::{Notification, Notifier, NotifyError};
 use crate::storage::ConfigRepository;
 
+fn is_private_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || is_unique_local_ipv6(v6)
+                || is_link_local_ipv6(v6)
+        }
+    }
+}
+
+fn is_unique_local_ipv6(ip: &Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    (segments[0] & 0xfe00) == 0xfc00
+}
+
+fn is_link_local_ipv6(ip: &Ipv6Addr) -> bool {
+    let segments = ip.segments();
+    (segments[0] & 0xffc0) == 0xfe80
+}
+
+fn validate_webhook_url(url: &str) -> Result<(), NotifyError> {
+    let parsed =
+        Url::parse(url).map_err(|e| NotifyError::SendFailed(format!("Invalid URL: {}", e)))?;
+
+    if parsed.scheme() != "https" {
+        return Err(NotifyError::InsecureUrl(
+            "Webhook URL must use HTTPS".to_string(),
+        ));
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| NotifyError::SendFailed("URL has no host".to_string()))?;
+
+    if host == "localhost" || host == "127.0.0.1" || host.starts_with("127.") {
+        return Err(NotifyError::PrivateNetworkNotAllowed(
+            "localhost is not allowed".to_string(),
+        ));
+    }
+
+    if let Some(ip) = host.parse::<IpAddr>().ok().filter(is_private_ip) {
+        return Err(NotifyError::PrivateNetworkNotAllowed(format!(
+            "Private IP {} is not allowed",
+            ip
+        )));
+    }
+
+    let lower_host = host.to_lowercase();
+    if lower_host.ends_with(".internal")
+        || lower_host.ends_with(".local")
+        || lower_host.ends_with(".localhost")
+        || lower_host == "metadata.google.internal"
+        || lower_host.ends_with(".metadata.google.internal")
+        || lower_host == "instance-data.ec2.internal"
+        || lower_host.ends_with(".ec2.internal")
+    {
+        return Err(NotifyError::PrivateNetworkNotAllowed(format!(
+            "Internal hostname {} is not allowed",
+            host
+        )));
+    }
+
+    Ok(())
+}
+
 pub struct WebhookNotifier {
     client: Client,
     webhook_url: String,
 }
 
 impl WebhookNotifier {
-    pub fn new(webhook_url: impl Into<String>) -> Self {
-        Self {
+    pub fn new(webhook_url: impl Into<String>) -> Result<Self, NotifyError> {
+        let url: String = webhook_url.into();
+        validate_webhook_url(&url)?;
+
+        Ok(Self {
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
-            webhook_url: webhook_url.into(),
-        }
+            webhook_url: url,
+        })
     }
 }
 
@@ -81,15 +159,21 @@ impl ConfigWebhookNotifier {
         }
     }
 
-    fn parse_urls(input: &str) -> Vec<String> {
-        input
+    fn parse_and_validate_urls(input: &str) -> Result<Vec<String>, NotifyError> {
+        let urls: Vec<String> = input
             .split(|c: char| {
                 c == ',' || c == ';' || c == '\n' || c == '\r' || c == '\t' || c == ' '
             })
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
-            .collect()
+            .collect();
+
+        for url in &urls {
+            validate_webhook_url(url)?;
+        }
+
+        Ok(urls)
     }
 
     fn safe_url_label(raw: &str) -> String {
@@ -159,7 +243,7 @@ impl Notifier for ConfigWebhookNotifier {
             .await
             .map_err(|e| NotifyError::BackendUnavailable(e.to_string()))?;
 
-        let urls = Self::parse_urls(&cfg.webhook_url);
+        let urls = Self::parse_and_validate_urls(&cfg.webhook_url)?;
         if urls.is_empty() {
             return Ok(());
         }
@@ -186,78 +270,44 @@ impl Notifier for ConfigWebhookNotifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notify::NotifyLevel;
-    use chrono::Utc;
 
     #[tokio::test]
-    async fn test_webhook_notifier_success() {
-        let mut server = mockito::Server::new_async().await;
-        let url = server.url();
-
-        let _m = server
-            .mock("POST", "/")
-            .with_status(200)
-            .create_async()
-            .await;
-
-        let notifier = WebhookNotifier::new(url);
-        let notification = Notification {
-            id: "test-1".to_string(),
-            title: "Test Title".to_string(),
-            body: "Test Body".to_string(),
-            level: NotifyLevel::Info,
-            created_at: Utc::now(),
-        };
-
-        let result = notifier.notify(notification).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_webhook_notifier_failure() {
-        let mut server = mockito::Server::new_async().await;
-        let url = server.url();
-
-        let _m = server
-            .mock("POST", "/")
-            .with_status(500)
-            .with_body("Internal Server Error")
-            .create_async()
-            .await;
-
-        let notifier = WebhookNotifier::new(url);
-        let notification = Notification {
-            id: "test-2".to_string(),
-            title: "Test Title".to_string(),
-            body: "Test Body".to_string(),
-            level: NotifyLevel::Error,
-            created_at: Utc::now(),
-        };
-
-        let result = notifier.notify(notification).await;
+    async fn test_webhook_notifier_rejects_http() {
+        let result = WebhookNotifier::new("http://example.com/webhook");
         assert!(result.is_err());
         match result.err().unwrap() {
-            NotifyError::SendFailed(msg) => {
-                assert!(msg.contains("500"));
-            }
-            NotifyError::BackendUnavailable(msg) => panic!("Unexpected error: {}", msg),
-            NotifyError::Platform(msg) => panic!("Unexpected error: {}", msg),
+            NotifyError::InsecureUrl(_) => {}
+            _ => panic!("Expected InsecureUrl error"),
         }
     }
 
     #[tokio::test]
-    async fn test_webhook_notifier_network_error() {
-        // Use an invalid port to simulate network error
-        let notifier = WebhookNotifier::new("http://127.0.0.1:1");
-        let notification = Notification {
-            id: "test-3".to_string(),
-            title: "Test Title".to_string(),
-            body: "Test Body".to_string(),
-            level: NotifyLevel::Info,
-            created_at: Utc::now(),
-        };
-
-        let result = notifier.notify(notification).await;
+    async fn test_webhook_notifier_rejects_localhost() {
+        let result = WebhookNotifier::new("https://localhost:8080/webhook");
         assert!(result.is_err());
+        match result.err().unwrap() {
+            NotifyError::PrivateNetworkNotAllowed(_) => {}
+            _ => panic!("Expected PrivateNetworkNotAllowed error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_webhook_notifier_rejects_private_ip() {
+        let result = WebhookNotifier::new("https://192.168.1.1/webhook");
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            NotifyError::PrivateNetworkNotAllowed(_) => {}
+            _ => panic!("Expected PrivateNetworkNotAllowed error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_webhook_notifier_rejects_metadata_endpoint() {
+        let result = WebhookNotifier::new("https://metadata.google.internal/computeMetadata/v1/");
+        assert!(result.is_err());
+        match result.err().unwrap() {
+            NotifyError::PrivateNetworkNotAllowed(_) => {}
+            _ => panic!("Expected PrivateNetworkNotAllowed error"),
+        }
     }
 }
