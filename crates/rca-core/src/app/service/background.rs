@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use crate::app::AppEvent;
@@ -9,6 +9,8 @@ use crate::app::notify_event_keys;
 use crate::monitor::CoreEvent;
 
 use super::AppServiceImpl;
+
+const EVENT_CHANNEL_BUFFER_SIZE: usize = 256;
 
 fn notification_from_event(event: &CoreEvent) -> Option<(&'static str, AppNotification)> {
     match event {
@@ -83,12 +85,28 @@ pub(super) async fn start_background_tasks(service: &AppServiceImpl) {
     let inner_clone = Arc::clone(&service.inner);
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
 
+    let (event_tx, mut event_rx) = mpsc::channel::<CoreEvent>(EVENT_CHANNEL_BUFFER_SIZE);
+
     let join = tokio::spawn(async move {
+        let forward_handle = tokio::spawn(async move {
+            while let Ok(event) = rx.recv().await {
+                if event_tx.send(event).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         loop {
             tokio::select! {
-                _ = &mut shutdown_rx => break,
-                result = rx.recv() => {
-                    let Ok(event) = result else { break; };
+                _ = &mut shutdown_rx => {
+                    forward_handle.abort();
+                    break;
+                }
+                result = event_rx.recv() => {
+                    let Some(event) = result else {
+                        break;
+                    };
+
                     {
                         let mut guard = inner_clone.lock().await;
                         AppServiceImpl::append_recent_event(&mut guard, event.clone());
