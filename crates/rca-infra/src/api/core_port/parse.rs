@@ -122,5 +122,5 @@ pub fn parse_limit(problem: &Value) -> Option<i64> {
     problem
         .get("limit")
         .and_then(Value::as_i64)
-        .and_then(|v| if v == -1 { None } else { Some(v) })
+        .filter(|&v| v != -1)
 }

@@ -10,4 +10,10 @@ pub enum NotifyError {
 
     #[error("send failed: {0}")]
     SendFailed(String),
+
+    #[error("insecure URL: {0}")]
+    InsecureUrl(String),
+
+    #[error("private network not allowed: {0}")]
+    PrivateNetworkNotAllowed(String),
 }

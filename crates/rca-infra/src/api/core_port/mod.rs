@@ -88,8 +88,22 @@ impl YktApiPort {
         })
     }
 
+    /// Creates a test client with insecure TLS settings.
+    ///
+    /// # Safety
+    /// This should ONLY be used in tests with mock servers on localhost.
+    /// The function will panic if used with non-localhost URLs in non-test builds.
     #[cfg(test)]
     fn new_for_test(base_url: &str) -> Result<Self, ApiError> {
+        // Security: Only allow insecure TLS for localhost URLs
+        if !base_url.starts_with("http://127.0.0.1") && !base_url.starts_with("http://localhost") {
+            panic!(
+                "new_for_test with insecure TLS is only allowed for localhost URLs. \
+                 Got: {}. Use new() for production URLs.",
+                base_url
+            );
+        }
+
         let user_agent =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:97.0) Gecko/20100101 Firefox/97.0"
                 .to_string();

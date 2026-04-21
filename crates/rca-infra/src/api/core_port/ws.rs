@@ -47,7 +47,7 @@ pub(super) fn map_ws_problem(problem_value: &Value, lesson_id: u64) -> Option<Ws
     let limit = problem_value
         .get("limit")
         .and_then(Value::as_i64)
-        .and_then(|v| if v == -1 { None } else { Some(v) });
+        .filter(|&v| v != -1);
 
     Some(WsEventDto::ProblemPublished(crate::api::ProblemDto {
         lesson_id,

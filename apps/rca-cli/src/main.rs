@@ -86,14 +86,8 @@ fn auth_state_summary(state: &AuthState) -> String {
         AuthState::WaitingQrScan { scene_id, .. } => {
             rust_i18n::t!("cli_auth_waiting_qr", scene_id = scene_id).to_string()
         }
-        AuthState::WaitingConfirm { scene_id } => {
-            rust_i18n::t!("cli_auth_waiting_confirm", scene_id = scene_id).to_string()
-        }
         AuthState::LoggedIn { user_id } => {
             rust_i18n::t!("cli_auth_logged_in", user_id = user_id).to_string()
-        }
-        AuthState::Refreshing { user_id } => {
-            rust_i18n::t!("cli_auth_refreshing", user_id = user_id).to_string()
         }
         AuthState::Failed { reason } => {
             rust_i18n::t!("cli_auth_failed", reason = reason).to_string()
@@ -233,7 +227,6 @@ async fn do_login(
                 println!("请在手机端确认登录。");
                 scene_id
             }
-            AuthState::WaitingConfirm { scene_id } => scene_id,
             other => {
                 return Err(format!("unexpected auth state after login start: {other:?}").into());
             }
@@ -562,16 +555,8 @@ mod tests {
         });
         assert!(s.contains('1'));
 
-        let s = auth_state_summary(&AuthState::WaitingConfirm {
-            scene_id: "2".to_string(),
-        });
-        assert!(s.contains('2'));
-
         let s = auth_state_summary(&AuthState::LoggedIn { user_id: 42 });
         assert!(s.contains("42"));
-
-        let s = auth_state_summary(&AuthState::Refreshing { user_id: 7 });
-        assert!(s.contains("7"));
 
         let s = auth_state_summary(&AuthState::Failed {
             reason: "oops".to_string(),

@@ -18,7 +18,6 @@ pub async fn perform_login(runner: CommandRunner, ui_handle: Weak<crate::AppWind
     let scene_id = match runner.controller().get_state().await {
         Ok(AppQueryResult::State(state)) => match state.auth_state {
             AuthState::WaitingQrScan { scene_id, .. } => scene_id,
-            AuthState::WaitingConfirm { scene_id } => scene_id,
             _ => {
                 runner.show_error(ui_handle.clone(), "发起登录后未获取到 scene_id".to_string());
                 return;

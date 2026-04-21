@@ -18,4 +18,7 @@ pub enum AuthError {
 
     #[error("invalid auth state: {0}")]
     InvalidState(String),
+
+    #[error("invalid state transition from {from} to {to}")]
+    InvalidTransition { from: String, to: String },
 }
