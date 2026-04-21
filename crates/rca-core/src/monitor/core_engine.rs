@@ -651,11 +651,11 @@ impl MonitorEngine for CoreMonitorEngine {
 mod tests {
     use std::num::NonZeroU64;
     use std::sync::{Arc, Mutex};
-    use std::time::Instant;
 
     use async_trait::async_trait;
     use chrono::Utc;
     use tokio::sync::mpsc;
+    use tokio::time::{Duration, sleep};
 
     use crate::app::ports::{ApiPort, ApiPortError, LessonWsEvent};
     use crate::auth::{AuthSession, QrLoginBootstrap, QrLoginProgress};
@@ -1024,7 +1024,8 @@ mod tests {
         let api = Arc::new(RecordingApi::default());
         let lesson = make_lesson();
         let session = make_session();
-        let cfg = make_monitor_config();
+        let mut cfg = make_monitor_config();
+        cfg.page_view_throttle = Duration::from_millis(50);
         let (event_tx, mut event_rx) = tokio::sync::broadcast::channel(8);
         let mut state = make_lesson_state();
 
@@ -1060,10 +1061,8 @@ mod tests {
         );
         assert!(event_rx.try_recv().is_err());
 
-        // Set last_reported_at to be older than the throttle window (throttle + 1s)
-        let back_ms = cfg.page_view_throttle.as_millis().saturating_add(1000) as u64;
-        state.last_reported_at =
-            Some((Instant::now() - tokio::time::Duration::from_millis(back_ms)).into());
+        // Wait until throttle window expires, then same-slide reporting should be allowed again.
+        sleep(cfg.page_view_throttle + Duration::from_millis(20)).await;
         CoreMonitorEngine::report_page_view_if_due(
             &(api.clone() as Arc<dyn ApiPort>),
             &session,
