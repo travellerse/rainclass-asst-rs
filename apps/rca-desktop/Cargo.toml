@@ -13,8 +13,8 @@ slint.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 chrono.workspace = true
 tracing.workspace = true
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tracing-appender = "0.2.4"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-appender.workspace = true
 rust-i18n.workspace = true
 
 [build-dependencies]

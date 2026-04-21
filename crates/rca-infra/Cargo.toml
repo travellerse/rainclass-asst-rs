@@ -9,16 +9,16 @@ default = []
 [dependencies]
 async-trait.workspace = true
 chrono = { workspace = true, features = ["serde"] }
-directories = "6.0.0"
+directories.workspace = true
 futures-core.workspace = true
-futures-util = "0.3"
-keyring = "3.6.3"
+futures-util.workspace = true
+keyring.workspace = true
 notify-rust = "4.12.0"
 rca-core = { version = "0.1.0", path = "../rca-core" }
-reqwest = { version = "0.13.2", features = ["json", "rustls"] }
+reqwest = { workspace = true, features = ["json", "rustls"] }
 semver = "1.0.27"
 pdf-writer = "0.14"
-image = { version = "0.25", default-features = false, features = [
+image = { workspace = true, default-features = false, features = [
     "jpeg",
     "png",
 ] }
@@ -37,8 +37,8 @@ tokio-tungstenite = { version = "0.29.0", features = [
     "rustls-tls-webpki-roots",
 ] }
 tracing.workspace = true
-tracing-appender = "0.2.4"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+tracing-appender.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url.workspace = true
 rust-i18n.workspace = true
 
