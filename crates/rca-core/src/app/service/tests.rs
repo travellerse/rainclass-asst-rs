@@ -1,8 +1,10 @@
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use tempfile::tempdir;
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use tokio::time::{Duration, sleep};
@@ -33,6 +35,7 @@ struct MockPorts {
     problems: Arc<Mutex<Vec<Problem>>>,
     notifications: Arc<Mutex<Vec<AppNotification>>>,
     update: Arc<Mutex<Option<UpdateInfo>>>,
+    wait_qr_login_script: Arc<Mutex<HashMap<String, Result<QrLoginProgress, ApiPortError>>>>,
 }
 
 impl MockPorts {
@@ -44,7 +47,19 @@ impl MockPorts {
             problems: Arc::new(Mutex::new(Vec::new())),
             notifications: Arc::new(Mutex::new(Vec::new())),
             update: Arc::new(Mutex::new(None)),
+            wait_qr_login_script: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn set_wait_qr_login_result(
+        &self,
+        scene_id: impl Into<String>,
+        result: Result<QrLoginProgress, ApiPortError>,
+    ) {
+        self.wait_qr_login_script
+            .lock()
+            .expect("wait_qr_login_script poisoned")
+            .insert(scene_id.into(), result);
     }
 }
 
@@ -171,6 +186,14 @@ impl ApiPort for MockPorts {
         scene_id: &str,
         _timeout_secs: u64,
     ) -> Result<QrLoginProgress, ApiPortError> {
+        if let Some(result) = self
+            .wait_qr_login_script
+            .lock()
+            .expect("wait_qr_login_script poisoned")
+            .remove(scene_id)
+        {
+            return result;
+        }
         self.poll_qr_login(scene_id).await
     }
 
@@ -1082,6 +1105,221 @@ async fn await_login_success_should_update_state_to_logged_in() {
         "expected LoggedIn state with user_id 42, got {:?}",
         state.auth_state
     );
+    assert!(state.last_error.is_none());
+}
+
+#[tokio::test]
+async fn await_login_timeout_should_keep_waiting_state_and_set_last_error() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+
+    ports.set_wait_qr_login_result("scene-1", Err(ApiPortError::timeout("await login timeout")));
+
+    let result = app
+        .handle_command(AppCommand::AwaitLogin {
+            scene_id: "scene-1".to_string(),
+            timeout_secs: 1,
+        })
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(AppError::ApiPort(ApiPortError::Timeout(_)))
+    ));
+
+    let state = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state failed");
+    let AppQueryResult::State(state) = state else {
+        panic!("expected state query result");
+    };
+
+    assert!(matches!(
+        state.auth_state,
+        crate::auth::AuthState::WaitingQrScan { .. }
+    ));
+    assert!(state.last_error.is_some());
+    assert!(
+        ports
+            .notifications
+            .lock()
+            .expect("notifications poisoned")
+            .is_empty(),
+        "timeout path should not emit notifier message"
+    );
+}
+
+#[tokio::test]
+async fn await_login_expired_should_transition_to_failed_with_reason() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+
+    ports.set_wait_qr_login_result("scene-1", Ok(QrLoginProgress::Expired));
+
+    app.handle_command(AppCommand::AwaitLogin {
+        scene_id: "scene-1".to_string(),
+        timeout_secs: 30,
+    })
+    .await
+    .expect("await login should complete on expired");
+
+    let state = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state failed");
+    let AppQueryResult::State(state) = state else {
+        panic!("expected state query result");
+    };
+
+    assert!(matches!(
+        state.auth_state,
+        crate::auth::AuthState::Failed { ref reason } if reason == "二维码已过期"
+    ));
+    assert!(
+        ports
+            .notifications
+            .lock()
+            .expect("notifications poisoned")
+            .is_empty(),
+        "expired path should not emit notifier message"
+    );
+}
+
+#[tokio::test]
+async fn await_login_rejected_should_transition_to_failed_with_reason() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+
+    ports.set_wait_qr_login_result("scene-1", Ok(QrLoginProgress::Rejected));
+
+    app.handle_command(AppCommand::AwaitLogin {
+        scene_id: "scene-1".to_string(),
+        timeout_secs: 30,
+    })
+    .await
+    .expect("await login should complete on rejected");
+
+    let state = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state failed");
+    let AppQueryResult::State(state) = state else {
+        panic!("expected state query result");
+    };
+
+    assert!(matches!(
+        state.auth_state,
+        crate::auth::AuthState::Failed { ref reason } if reason == "登录被拒绝"
+    ));
+    assert!(
+        ports
+            .notifications
+            .lock()
+            .expect("notifications poisoned")
+            .is_empty(),
+        "rejected path should not emit notifier message"
+    );
+}
+
+#[tokio::test]
+async fn await_login_with_mismatched_scene_id_should_not_log_in() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    app.handle_command(AppCommand::LoginByQr)
+        .await
+        .expect("login bootstrap failed");
+
+    ports.set_wait_qr_login_result(
+        "scene-1",
+        Ok(QrLoginProgress::Confirmed(AuthSession {
+            user_id: 42,
+            access_token: "access-token".to_string(),
+            refresh_token: Some("refresh-token".to_string()),
+            expires_at_unix_ms: None,
+            csrf_token: Some("csrf-token".to_string()),
+            original_id: Some("original-id".to_string()),
+        })),
+    );
+
+    let result = app
+        .handle_command(AppCommand::AwaitLogin {
+            scene_id: "scene-mismatch".to_string(),
+            timeout_secs: 30,
+        })
+        .await;
+
+    assert!(matches!(result, Err(AppError::InvalidCommand(_))));
+
+    let state = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state failed");
+    let AppQueryResult::State(state) = state else {
+        panic!("expected state query result");
+    };
+
+    assert!(
+        !matches!(state.auth_state, crate::auth::AuthState::LoggedIn { .. }),
+        "mismatched scene_id must not transition to LoggedIn"
+    );
 }
 
 #[tokio::test]
@@ -1136,11 +1374,12 @@ async fn download_presentation_should_fail_when_not_logged_in() {
 
     *ports.session.lock().unwrap() = None;
 
+    let tempdir = tempdir().expect("failed to create temporary directory");
     let result = app
         .handle_command(AppCommand::DownloadPresentation {
             presentation_id: 123,
             lesson_id: None,
-            save_dir: std::path::PathBuf::from("/tmp"),
+            save_dir: tempdir.path().to_path_buf(),
         })
         .await;
 
@@ -1178,10 +1417,12 @@ async fn download_presentation_success_should_emit_notification() {
 
     let mut events = app.subscribe_events().await;
 
+    let tempdir = tempdir().expect("failed to create temporary directory");
+
     app.handle_command(AppCommand::DownloadPresentation {
         presentation_id: 123,
         lesson_id: Some(456),
-        save_dir: std::path::PathBuf::from("/tmp"),
+        save_dir: tempdir.path().to_path_buf(),
     })
     .await
     .expect("download presentation failed");

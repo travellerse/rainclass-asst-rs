@@ -111,12 +111,26 @@ impl AppService for AppServiceImpl {
                 scene_id,
                 timeout_secs,
             } => {
-                let progress = self
-                    .deps
-                    .api
-                    .wait_qr_login(&scene_id, timeout_secs)
-                    .await
-                    .map_err(AppError::from)?;
+                let expected_scene = self
+                    .with_inner(|inner| match &inner.app_state.auth_state {
+                        AuthState::WaitingQrScan { scene_id, .. } => Some(scene_id.clone()),
+                        _ => None,
+                    })
+                    .await;
+                if expected_scene.as_deref() != Some(scene_id.as_str()) {
+                    return Err(AppError::InvalidCommand(
+                        "await login scene_id does not match active QR login".to_string(),
+                    ));
+                }
+
+                let progress = match self.deps.api.wait_qr_login(&scene_id, timeout_secs).await {
+                    Ok(progress) => progress,
+                    Err(err) => {
+                        self.set_last_error(err.to_string()).await;
+                        self.emit_state_changed().await;
+                        return Err(AppError::from(err));
+                    }
+                };
                 self.apply_qr_login_progress(scene_id, progress).await
             }
             AppCommand::Logout => {
