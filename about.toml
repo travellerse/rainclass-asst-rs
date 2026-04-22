@@ -1,3 +1,5 @@
+# NOTE: Keep this list in sync with [licenses].allow in deny.toml.
+# Source of truth: deny.toml ([licenses].allow). Update both in the same PR.
 accepted = [
     "MIT",
     "Apache-2.0",
