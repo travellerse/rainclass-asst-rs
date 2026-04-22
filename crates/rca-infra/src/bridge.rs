@@ -149,11 +149,10 @@ impl SessionStorePort for CoreSessionStoreAdapter {
             }));
         }
 
-        // 2. 如果keyring没有，但文件中有实际token（迁移场景）
-        // 保存到keyring并更新文件为标记
+        // 2. 如果keyring没有，但文件中有实际token（兼容回退）
         if !record.access_token.is_empty() && record.access_token != Self::KEYRING_TOKEN_MARKER {
-            // 保存到keyring
-            self.credential_store
+            if let Err(e) = self
+                .credential_store
                 .save_token_pair(
                     &self.service_name,
                     &account,
@@ -161,28 +160,9 @@ impl SessionStorePort for CoreSessionStoreAdapter {
                     record.refresh_token.as_deref(),
                 )
                 .await
-                .map_err(|e| {
-                    tracing::warn!("Failed to migrate token to keyring: {}", e);
-                    StoragePortError::save(e)
-                })?;
-
-            // 更新session文件，使用keyring标记，不存储实际token
-            let sanitized_record = SessionRecord {
-                user_id: record.user_id,
-                access_token: Self::KEYRING_TOKEN_MARKER.to_string(),
-                refresh_token: Some(Self::KEYRING_TOKEN_MARKER.to_string()),
-                expires_at_unix_ms: record.expires_at_unix_ms,
-                csrf_token: record.csrf_token.clone(),
-                original_id: record.original_id.clone(),
-            };
-
-            self.session_repo
-                .save(&sanitized_record)
-                .await
-                .map_err(|e| {
-                    tracing::warn!("Failed to update session file with keyring marker: {}", e);
-                    StoragePortError::save(e)
-                })?;
+            {
+                tracing::warn!("Failed to backfill token to keyring: {}", e);
+            }
 
             return Ok(Some(AuthSession {
                 user_id: record.user_id,
@@ -200,7 +180,8 @@ impl SessionStorePort for CoreSessionStoreAdapter {
     async fn save_session(&self, session: &AuthSession) -> Result<(), StoragePortError> {
         let account = Self::account_of(session.user_id);
 
-        self.credential_store
+        if let Err(e) = self
+            .credential_store
             .save_token_pair(
                 &self.service_name,
                 &account,
@@ -208,16 +189,18 @@ impl SessionStorePort for CoreSessionStoreAdapter {
                 session.refresh_token.as_deref(),
             )
             .await
-            .map_err(|e| {
-                tracing::error!("Failed to save token to keyring: {}", e);
-                StoragePortError::save(e)
-            })?;
+        {
+            tracing::warn!(
+                "Failed to save token to keyring, fallback to session file only: {}",
+                e
+            );
+        }
 
         self.session_repo
             .save(&SessionRecord {
                 user_id: session.user_id,
-                access_token: Self::KEYRING_TOKEN_MARKER.to_string(),
-                refresh_token: Some(Self::KEYRING_TOKEN_MARKER.to_string()),
+                access_token: session.access_token.clone(),
+                refresh_token: session.refresh_token.clone(),
                 expires_at_unix_ms: session.expires_at_unix_ms,
                 csrf_token: session.csrf_token.clone(),
                 original_id: session.original_id.clone(),
@@ -452,14 +435,6 @@ mod tests {
                 original_id: Some("orig-file".to_string()),
             }))
         });
-        session_mock
-            .expect_save()
-            .withf(|record: &SessionRecord| {
-                record.access_token == CoreSessionStoreAdapter::KEYRING_TOKEN_MARKER
-                    && record.refresh_token
-                        == Some(CoreSessionStoreAdapter::KEYRING_TOKEN_MARKER.to_string())
-            })
-            .returning(|_| Ok(()));
 
         let cred = FakeCredStore::new(None);
 
@@ -501,6 +476,36 @@ mod tests {
 
         let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
         adapter.clear_session().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_adapter_save_persists_tokens_in_file() {
+        let mut session_mock = MockSessionRepo::new();
+        session_mock
+            .expect_save()
+            .withf(|record: &SessionRecord| {
+                record.user_id == 42
+                    && record.access_token == "access-token"
+                    && record.refresh_token == Some("refresh-token".to_string())
+                    && record.csrf_token.as_deref() == Some("csrf")
+                    && record.original_id.as_deref() == Some("orig")
+            })
+            .returning(|_| Ok(()));
+
+        let cred = FakeCredStore::new(None);
+        let adapter = CoreSessionStoreAdapter::new(Arc::new(session_mock), Arc::new(cred));
+
+        adapter
+            .save_session(&AuthSession {
+                user_id: 42,
+                access_token: "access-token".to_string(),
+                refresh_token: Some("refresh-token".to_string()),
+                expires_at_unix_ms: Some(12345),
+                csrf_token: Some("csrf".to_string()),
+                original_id: Some("orig".to_string()),
+            })
+            .await
+            .unwrap();
     }
 
     // ── CoreNotifierAdapter ────────────────────────────────────
