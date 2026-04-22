@@ -19,7 +19,7 @@ impl AppService for AppServiceImpl {
                     .load_config()
                     .await
                     .map_err(AppError::from)?;
-                self.with_inner_mut(|inner| inner.config = config);
+                self.with_inner_mut(|inner| inner.config = config).await;
                 self.emit_state_changed().await;
                 Ok(())
             }
@@ -33,11 +33,11 @@ impl AppService for AppServiceImpl {
 
                 match session {
                     Some(session) => {
-                        self.set_auth_logged_in(session.user_id);
-                        self.clear_last_error();
+                        self.set_auth_logged_in(session.user_id).await;
+                        self.clear_last_error().await;
                     }
                     None => {
-                        self.set_auth_logged_out();
+                        self.set_auth_logged_out().await;
                     }
                 }
 
@@ -79,8 +79,8 @@ impl AppService for AppServiceImpl {
                     .await
                     .map_err(AppError::from)?;
 
-                self.set_auth_logged_in(refreshed.user_id);
-                self.clear_last_error();
+                self.set_auth_logged_in(refreshed.user_id).await;
+                self.clear_last_error().await;
 
                 self.emit_state_changed().await;
                 Ok(())
@@ -92,8 +92,9 @@ impl AppService for AppServiceImpl {
                     .start_qr_login()
                     .await
                     .map_err(AppError::from)?;
-                self.set_auth_waiting_qr(bootstrap.scene_id, bootstrap.token);
-                self.clear_last_error();
+                self.set_auth_waiting_qr(bootstrap.scene_id, bootstrap.token)
+                    .await;
+                self.clear_last_error().await;
                 self.emit_state_changed().await;
                 Ok(())
             }
@@ -110,12 +111,26 @@ impl AppService for AppServiceImpl {
                 scene_id,
                 timeout_secs,
             } => {
-                let progress = self
-                    .deps
-                    .api
-                    .wait_qr_login(&scene_id, timeout_secs)
-                    .await
-                    .map_err(AppError::from)?;
+                let expected_scene = self
+                    .with_inner(|inner| match &inner.app_state.auth_state {
+                        AuthState::WaitingQrScan { scene_id, .. } => Some(scene_id.clone()),
+                        _ => None,
+                    })
+                    .await;
+                if expected_scene.as_deref() != Some(scene_id.as_str()) {
+                    return Err(AppError::InvalidCommand(
+                        "await login scene_id does not match active QR login".to_string(),
+                    ));
+                }
+
+                let progress = match self.deps.api.wait_qr_login(&scene_id, timeout_secs).await {
+                    Ok(progress) => progress,
+                    Err(err) => {
+                        self.set_last_error(err.to_string()).await;
+                        self.emit_state_changed().await;
+                        return Err(AppError::from(err));
+                    }
+                };
                 self.apply_qr_login_progress(scene_id, progress).await
             }
             AppCommand::Logout => {
@@ -125,37 +140,39 @@ impl AppService for AppServiceImpl {
                     .clear_session()
                     .await
                     .map_err(AppError::from)?;
-                self.set_auth_logged_out();
-                self.set_monitor_running(false);
+                self.set_auth_logged_out().await;
+                self.set_monitor_running(false).await;
                 self.emit_state_changed().await;
                 Ok(())
             }
             AppCommand::StartMonitor => {
-                let should_start = self.with_inner(|inner| {
-                    if matches!(inner.app_state.auth_state, AuthState::LoggedOut) {
-                        return Err(AppError::InvalidCommand(
-                            "cannot start monitor before login".to_string(),
-                        ));
-                    }
-                    if inner.app_state.monitor_running {
-                        return Ok(false);
-                    }
-                    Ok(true)
-                })?;
+                let should_start = self
+                    .with_inner(|inner| {
+                        if matches!(inner.app_state.auth_state, AuthState::LoggedOut) {
+                            return Err(AppError::InvalidCommand(
+                                "cannot start monitor before login".to_string(),
+                            ));
+                        }
+                        if inner.app_state.monitor_running {
+                            return Ok(false);
+                        }
+                        Ok(true)
+                    })
+                    .await?;
 
                 if !should_start {
                     return Ok(());
                 }
 
-                self.set_monitor_running(true);
-                self.clear_last_error();
+                self.set_monitor_running(true).await;
+                self.clear_last_error().await;
                 self.start_background_monitor().await;
                 self.emit_state_changed().await;
                 Ok(())
             }
             AppCommand::StopMonitor => {
                 self.stop_monitor_engine().await;
-                self.set_monitor_running(false);
+                self.set_monitor_running(false).await;
                 self.emit_state_changed().await;
                 Ok(())
             }
@@ -181,7 +198,7 @@ impl AppService for AppServiceImpl {
                     .save_config(&config)
                     .await
                     .map_err(AppError::from)?;
-                self.with_inner_mut(|inner| inner.config = config);
+                self.with_inner_mut(|inner| inner.config = config).await;
                 self.emit_state_changed().await;
                 Ok(())
             }
@@ -216,10 +233,10 @@ impl AppService for AppServiceImpl {
     }
 
     async fn handle_query(&self, query: AppQuery) -> Result<crate::app::AppQueryResult, AppError> {
-        self.query_impl(query)
+        self.query_impl(query).await
     }
 
-    fn subscribe_events(&self) -> mpsc::Receiver<AppEvent> {
-        self.subscribe_events_impl()
+    async fn subscribe_events(&self) -> mpsc::Receiver<AppEvent> {
+        self.subscribe_events_impl().await
     }
 }

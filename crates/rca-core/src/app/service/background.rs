@@ -72,11 +72,8 @@ impl Drop for CoreBackgroundTasks {
     }
 }
 
-pub(super) fn start_background_tasks(service: &AppServiceImpl) {
-    let mut bg = service
-        .background
-        .lock()
-        .expect("core app background poisoned");
+pub(super) async fn start_background_tasks(service: &AppServiceImpl) {
+    let mut bg = service.background.lock().await;
     if bg.is_some() {
         return;
     }
@@ -88,12 +85,20 @@ pub(super) fn start_background_tasks(service: &AppServiceImpl) {
 
     let join = tokio::spawn(async move {
         loop {
+            let next_event = rx.recv();
+            tokio::pin!(next_event);
+
             tokio::select! {
-                _ = &mut shutdown_rx => break,
-                result = rx.recv() => {
-                    let Ok(event) = result else { break; };
+                _ = &mut shutdown_rx => {
+                    break;
+                }
+                result = &mut next_event => {
+                    let Ok(event) = result else {
+                        break;
+                    };
+
                     {
-                        let mut guard = inner_clone.lock().expect("core app state poisoned");
+                        let mut guard = inner_clone.lock().await;
                         AppServiceImpl::append_recent_event(&mut guard, event.clone());
                         if let CoreEvent::MonitorStopped { .. } = event {
                             guard.app_state.monitor_running = false;
@@ -138,10 +143,7 @@ pub(super) fn start_background_tasks(service: &AppServiceImpl) {
     });
 }
 
-pub(super) fn stop_background_tasks(service: &AppServiceImpl) {
-    let mut bg = service
-        .background
-        .lock()
-        .expect("core app background poisoned");
+pub(super) async fn stop_background_tasks(service: &AppServiceImpl) {
+    let mut bg = service.background.lock().await;
     let _ = bg.take();
 }

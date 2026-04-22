@@ -14,5 +14,5 @@ pub enum AppQueryResult {
 pub trait AppService: Send + Sync {
     async fn handle_command(&self, cmd: AppCommand) -> Result<(), AppError>;
     async fn handle_query(&self, query: AppQuery) -> Result<AppQueryResult, AppError>;
-    fn subscribe_events(&self) -> mpsc::Receiver<AppEvent>;
+    async fn subscribe_events(&self) -> mpsc::Receiver<AppEvent>;
 }

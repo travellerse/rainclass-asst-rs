@@ -2,6 +2,7 @@
 name = "rca-core"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
@@ -20,3 +21,6 @@ tracing.workspace = true
 rand = "0.10"
 uuid = { workspace = true, features = ["serde", "v4"] }
 rust-i18n.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

@@ -2,6 +2,7 @@
 name = "rca-cli"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
 
 [features]
 default = []
@@ -12,12 +13,12 @@ rca-core = { version = "0.1.0", path = "../../crates/rca-core" }
 rca-infra = { version = "0.1.0", path = "../../crates/rca-infra" }
 clap.workspace = true
 qrcode = "0.14"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+image = { workspace = true, default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+reqwest = { workspace = true }
 rqrr = "0.10"
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "signal"] }
 tracing.workspace = true
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-tracing-appender = "0.2.4"
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-appender.workspace = true
 rust-i18n.workspace = true
 indicatif = "0.18.4"

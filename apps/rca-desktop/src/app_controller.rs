@@ -98,6 +98,6 @@ impl DesktopController {
         let _ = self
             .runtime
             .block_on(self.app.handle_command(AppCommand::StopMonitor));
-        self.app.stop_background_tasks();
+        self.runtime.block_on(self.app.stop_background_tasks());
     }
 }

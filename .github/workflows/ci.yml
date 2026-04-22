@@ -48,6 +48,11 @@ jobs:
       - name: Clippy
         run: cargo xtask clippy --locked
 
+      - name: Security audit
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
   build-and-test:
     needs: lint
     strategy:
