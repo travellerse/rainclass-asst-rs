@@ -1154,7 +1154,15 @@ async fn await_login_timeout_should_keep_waiting_state_and_set_last_error() {
         state.auth_state,
         crate::auth::AuthState::WaitingQrScan { .. }
     ));
-    assert!(state.last_error.is_some());
+    let last_error = state
+        .last_error
+        .as_ref()
+        .expect("expected last_error on login timeout");
+    let last_error_msg = format!("{last_error:?}");
+    assert!(
+        last_error_msg.contains("await login timeout"),
+        "expected timeout message in last_error to contain \"await login timeout\", got {last_error_msg}",
+    );
     assert!(
         ports
             .notifications
@@ -1319,6 +1327,58 @@ async fn await_login_with_mismatched_scene_id_should_not_log_in() {
     assert!(
         !matches!(state.auth_state, crate::auth::AuthState::LoggedIn { .. }),
         "mismatched scene_id must not transition to LoggedIn"
+    );
+}
+
+#[tokio::test]
+async fn await_login_without_qr_login_should_return_invalid_command() {
+    let ports = Arc::new(MockPorts::new(default_config()));
+    let app = AppServiceImpl::new_started(
+        CoreAppDeps {
+            api: ports.clone(),
+            config_store: ports.clone(),
+            session_store: ports.clone(),
+            notifier: ports.clone(),
+            update_checker: ports.clone(),
+            monitor_engine: Arc::new(crate::monitor::CoreMonitorEngine::new(ports.clone())),
+        },
+        default_config(),
+    )
+    .await;
+
+    let state_before = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state before await login failed");
+    let AppQueryResult::State(state_before) = state_before else {
+        panic!("expected state query result");
+    };
+
+    let result = app
+        .handle_command(AppCommand::AwaitLogin {
+            scene_id: "scene-random".to_string(),
+            timeout_secs: 5,
+        })
+        .await;
+
+    assert!(matches!(result, Err(AppError::InvalidCommand(_))));
+
+    let state_after = app
+        .handle_query(AppQuery::GetAppState)
+        .await
+        .expect("query state after await login failed");
+    let AppQueryResult::State(state_after) = state_after else {
+        panic!("expected state query result");
+    };
+
+    assert_eq!(state_after.last_error, state_before.last_error);
+    assert!(
+        ports
+            .notifications
+            .lock()
+            .expect("notifications poisoned")
+            .is_empty(),
+        "AwaitLogin without active QR login should not emit notifier messages"
     );
 }
 
