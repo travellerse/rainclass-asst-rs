@@ -62,6 +62,9 @@ pub enum ApiPortError {
     #[error("api protocol changed: {0}")]
     ProtocolChanged(String),
 
+    #[error("lesson ended")]
+    LessonEnded,
+
     #[error("api auth failed: {0}")]
     AuthFailed(String),
 }

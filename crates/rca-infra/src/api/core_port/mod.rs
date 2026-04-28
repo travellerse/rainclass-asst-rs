@@ -870,7 +870,10 @@ impl ApiPort for YktApiPort {
             lesson_id.0.get(),
         )
         .await
-        .map_err(|err| ApiPortError::request("connect lesson ws", err))?;
+        .map_err(|err| match err {
+            ApiError::LessonEnded => ApiPortError::LessonEnded,
+            _ => ApiPortError::request("connect lesson ws", err),
+        })?;
 
         let (tx, rx) = mpsc::channel(128);
         let lesson_id_copy = lesson_id;

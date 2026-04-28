@@ -502,6 +502,16 @@ impl MonitorEngine for CoreMonitorEngine {
 
                         let mut ws_rx = match connect_result {
                             Ok(ws_rx) => ws_rx,
+                            Err(crate::app::ports::ApiPortError::LessonEnded) => {
+                                tracing::info!(
+                                    lesson_id = lesson_clone.lesson_id.0.get(),
+                                    "lesson ended or checkin returned 50004. Stopping monitor."
+                                );
+                                let _ = event_tx_lesson.send(CoreEvent::MonitorStopped {
+                                    at: Utc::now(),
+                                });
+                                break;
+                            }
                             Err(err) => {
                                 let _ = event_tx_lesson.send(CoreEvent::Error {
                                     code: "MONITOR_WS_CONNECT_FAILED",

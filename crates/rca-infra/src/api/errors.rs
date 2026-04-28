@@ -26,6 +26,9 @@ pub enum ApiError {
     #[error("rate limited")]
     RateLimited,
 
+    #[error("lesson ended")]
+    LessonEnded,
+
     #[error("invalid header `{header}`: {detail}")]
     InvalidHeader {
         header: &'static str,

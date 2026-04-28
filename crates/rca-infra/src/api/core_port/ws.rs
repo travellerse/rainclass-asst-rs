@@ -116,6 +116,12 @@ impl YktApiPort {
                         .map(ToString::to_string);
                 }
             } else {
+                if checkin_value.get("code").and_then(Value::as_u64) == Some(50004)
+                    || checkin_value.get("msg").and_then(Value::as_str) == Some("LESSON_END")
+                {
+                    tracing::info!("lesson {} ended (50004 LESSON_END).", lesson_id);
+                    return Err(ApiError::LessonEnded);
+                }
                 tracing::warn!("checkin response error: {:?}", checkin_value);
             }
 
