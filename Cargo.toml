@@ -35,7 +35,7 @@ tracing-appender = "0.2"
 slint = "1.16"
 slint-build = "1.16"
 clap = { version = "4", features = ["derive"] }
-rust-i18n = "3"
+rust-i18n = "4"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 image = { version = "0.25", default-features = false }
 keyring = "3"
