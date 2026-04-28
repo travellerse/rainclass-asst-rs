@@ -5827,6 +5827,7 @@ dependencies = [
  "futures-util",
  "image",
  "keyring",
+ "keyring-core",
  "lopdf",
  "mockall",
  "mockito",

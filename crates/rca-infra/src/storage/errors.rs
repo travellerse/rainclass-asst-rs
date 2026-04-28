@@ -13,7 +13,7 @@ pub enum StorageError {
         service: String,
         account: String,
         #[source]
-        source: keyring::Error,
+        source: keyring_core::Error,
     },
 
     #[error("keyring set failed ({service}/{account}): {source}")]
@@ -21,7 +21,7 @@ pub enum StorageError {
         service: String,
         account: String,
         #[source]
-        source: keyring::Error,
+        source: keyring_core::Error,
     },
 
     #[error("keyring get failed ({service}/{account}): {source}")]
@@ -29,7 +29,7 @@ pub enum StorageError {
         service: String,
         account: String,
         #[source]
-        source: keyring::Error,
+        source: keyring_core::Error,
     },
 
     #[error("keyring delete failed ({service}/{account}): {source}")]
@@ -37,7 +37,7 @@ pub enum StorageError {
         service: String,
         account: String,
         #[source]
-        source: keyring::Error,
+        source: keyring_core::Error,
     },
 
     #[error("invalid config: {0}")]
