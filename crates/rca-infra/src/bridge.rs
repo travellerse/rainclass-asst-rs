@@ -133,12 +133,19 @@ impl SessionStorePort for CoreSessionStoreAdapter {
         let account = Self::account_of(record.user_id);
 
         // 1. 优先从keyring加载token
-        if let Some((access, refresh)) = self
+        let keyring_tokens = match self
             .credential_store
             .load_token_pair(&self.service_name, &account)
             .await
-            .map_err(StoragePortError::load)?
         {
+            Ok(tokens) => tokens,
+            Err(e) => {
+                tracing::debug!("keyring load skipped: {}", e);
+                None
+            }
+        };
+
+        if let Some((access, refresh)) = keyring_tokens {
             return Ok(Some(AuthSession {
                 user_id: record.user_id,
                 access_token: access,
@@ -217,10 +224,13 @@ impl SessionStorePort for CoreSessionStoreAdapter {
             .map_err(StoragePortError::load)?
         {
             let account = Self::account_of(record.user_id);
-            self.credential_store
+            if let Err(e) = self
+                .credential_store
                 .delete_token_pair(&self.service_name, &account)
                 .await
-                .map_err(StoragePortError::clear)?;
+            {
+                tracing::debug!("keyring delete skipped: {}", e);
+            }
         }
         self.session_repo
             .clear()
