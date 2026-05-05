@@ -15,7 +15,7 @@ futures-core.workspace = true
 futures-util.workspace = true
 keyring.workspace = true
 keyring-core = "1"
-notify-rust = "4.16.1"
+notify-rust = "4.17.0"
 rca-core = { version = "0.1.0", path = "../rca-core" }
 reqwest = { workspace = true, features = ["json", "rustls"] }
 semver = "1.0.27"
